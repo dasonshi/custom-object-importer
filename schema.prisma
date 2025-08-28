@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Install {
+  id           String   @id @default(cuid())
+  locationId   String   @unique @map("location_id")
+  accessToken  String   @map("access_token")  // Encrypted
+  refreshToken String   @map("refresh_token") // Encrypted
+  expiresAt    BigInt   @map("expires_at")    // Store as timestamp
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  
+  @@map("installs")
+  @@index([locationId])
+}
