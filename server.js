@@ -14,7 +14,7 @@ import { InstallsDB } from './database.js';
 
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
-app.set('trust proxy', true); // trust CF + Render chain
+app.set('trust proxy', 1); // trust CF + Render chain
 app.disable('x-powered-by');
 
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
@@ -710,6 +710,47 @@ app.get('/api/objects', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
 });
+// Get custom fields for a specific object key
+app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  try {
+    const token = await withAccessToken(locationId);
+    
+    // Ensure object key has the required prefix
+    const fullObjectKey = objectKey.startsWith('custom_objects.') 
+      ? objectKey 
+      : `custom_objects.${objectKey}`;
+    
+    const response = await axios.get(
+      `${API_BASE}/custom-fields/object-key/${fullObjectKey}`,
+      { headers: authHeader(token), params: { locationId } }
+    );
+    res.json(response.data);
+  } catch (e) {
+    console.error(`Failed to fetch fields for object ${objectKey}:`, e?.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
+  }
+});
+
+// Serve CSV templates
+app.get('/templates/:type', (req, res) => {
+  const { type } = req.params;
+  
+  if (!['objects', 'fields', 'records'].includes(type)) {
+    return res.status(404).json({ error: 'Template not found' });
+  }
+  
+  const templatePath = `./templates/${type}.csv`;
+  res.download(templatePath, `${type}_template.csv`, (err) => {
+    if (err) {
+      console.error(`Template download error for ${type}:`, err.message);
+      res.status(404).json({ error: 'Template file not found' });
+    }
+  });
+});
+
 // ===== Server Startup =====
 validateEncryptionSetup();
 
