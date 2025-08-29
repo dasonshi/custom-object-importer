@@ -13,6 +13,10 @@ import { InstallsDB } from './database.js';
 
 
 const app = express();
+// trust Cloudflare/Render proxy so req.secure is true and secure cookies work
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
 app.get('/oauth/install', (req, res) => {
   const state = createSecureState();
@@ -56,6 +60,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 // Cookie parser with your APP_SECRET
 app.use(cookieParser(process.env.APP_SECRET || 'dev-secret-change-me-in-production'));
+const COOKIE_CLEAR_OPTS = {
+  domain: process.env.COOKIE_DOMAIN || undefined, // e.g., importer.savvysales.ai
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'none'
+};
 
 // CORS configuration
 const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:8080').split(',').map(s => s.trim()).filter(Boolean);
@@ -73,6 +83,14 @@ app.use(cors({
   },
   credentials: true // Allow cookies
 }));
+// Allow embedding inside HighLevel
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://app.gohighlevel.com https://*.gohighlevel.com"
+  );
+  next();
+});
 
 // Rate limiting
 app.use('/oauth', rateLimit({
@@ -208,7 +226,7 @@ async function requireAuth(req, res, next) {
   const hasInstall = await installs.has(locationId);
   if (!hasInstall) {
     // Clear invalid cookie
-    res.clearCookie('ghl_location');
+res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
     return res.status(401).json({ 
       error: 'Installation not found',
       message: 'Please re-authenticate'
@@ -282,7 +300,7 @@ app.get('/api/auth/status', async (req, res) => {
 });
 // Logout endpoint
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('ghl_location');
+res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
   res.json({ message: 'Logged out successfully' });
 });
 app.get('/oauth/callback', async (req, res) => {
@@ -323,13 +341,14 @@ app.get('/oauth/callback', async (req, res) => {
     });
 
     // Set secure authentication cookie
-    res.cookie('ghl_location', locationId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      signed: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-    });
+res.cookie('ghl_location', locationId, {
+  domain: process.env.COOKIE_DOMAIN || undefined, // e.g., importer.savvysales.ai
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',  // required when SameSite=None
+  sameSite: 'none',                                // needed if GHL loads you in an iframe
+  signed: true,
+  maxAge: 7 * 24 * 60 * 60 * 1000
+});
 
     res.send(`<!doctype html><html><body style="font-family:system-ui;padding:24px">
       <h1>✅ Connected Successfully</h1>
@@ -651,15 +670,19 @@ try {
     });
   }
 });
-
 // ===== Error Handling =====
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
-  });
+// Basic entry points
+app.get('/', (req, res) => {
+  // Simple bounce to your in-app page
+  return res.redirect('/launch');
 });
+
+app.get('/launch', (req, res) => {
+  res
+    .status(200)
+    .send('Custom Object Importer is live. Use /oauth/install to connect, then /api/auth/status to verify.');
+});
+
 // ===== Debug Route: List custom object schemas =====
 // ===== Debug Route: List objects =====
 app.get('/api/objects', requireAuth, async (req, res) => {
@@ -691,6 +714,13 @@ app.listen(PORT, async () => {
   } catch (error) {
     console.error('❌ Database connection error:', error.message);
   }
+});
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
 });
 
 // Graceful shutdown
