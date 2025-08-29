@@ -146,3 +146,5 @@ api/.env
 api/prisma/.env
 node_modules/
 api/node_modules/
+
+.DS_Store
