@@ -14,7 +14,7 @@ import { InstallsDB } from './database.js';
 
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
-app.set('trust proxy', 1);
+app.set('trust proxy', true); // trust CF + Render chain
 app.disable('x-powered-by');
 
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
@@ -94,20 +94,23 @@ app.use((req, res, next) => {
 
 // Rate limiting
 app.use('/oauth', rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 OAuth requests per 15 minutes per IP
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Too many OAuth requests, please try again later' }
 }));
 
 app.use('/import', rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 3, // 3 imports per minute per IP
+  windowMs: 60 * 1000,
+  max: 3,
+  skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Too many import requests, please slow down' }
 }));
 
 app.use(rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // 200 general requests per 15 minutes per IP
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 const API_BASE = 'https://services.leadconnectorhq.com';
@@ -310,12 +313,17 @@ app.get('/oauth/callback', async (req, res) => {
     return res.status(400).send('Authorization code is required');
   }
   
+// Marketplace sometimes omits `state`; verify if present, otherwise proceed
+if (typeof state === 'string' && state.length > 0) {
   try {
     verifySecureState(state);
   } catch (e) {
     console.error('OAuth state validation failed:', e.message);
     return res.status(400).send(`Invalid or expired state: ${e.message}`);
   }
+} else {
+  console.warn('OAuth callback arrived without state (likely Marketplace install). Proceeding.');
+}
 
   try {
     const body = new URLSearchParams({
