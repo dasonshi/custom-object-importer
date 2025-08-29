@@ -96,6 +96,7 @@ app.use((req, res, next) => {
 app.use('/oauth', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  trustProxy: true,
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Too many OAuth requests, please try again later' }
 }));
@@ -103,6 +104,7 @@ app.use('/oauth', rateLimit({
 app.use('/import', rateLimit({
   windowMs: 60 * 1000,
   max: 3,
+  trustProxy: true,
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Too many import requests, please slow down' }
 }));
@@ -110,6 +112,7 @@ app.use('/import', rateLimit({
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
+  trustProxy: true,
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
