@@ -1,0 +1,4 @@
+object_key,field_key,name,type,required
+test_products,product_name,Product Name,text,true
+test_products,price,Price,number,false
+test_products,category,Category,select,false
