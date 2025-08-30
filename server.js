@@ -807,27 +807,6 @@ app.get('/api/objects', requireAuth, async (req, res) => {
 });
 
 // Get custom fields for a specific object key
-app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
-  const locationId = req.locationId;
-  let { objectKey } = req.params;
-  
-  try {
-    const token = await withAccessToken(locationId);
-    
-    // Always ensure we have the correct format by removing any existing prefix and adding it back
-    const cleanKey = objectKey.replace(/^custom_objects\./, '');
-    const apiObjectKey = `custom_objects.${cleanKey}`;
-    
-    const response = await axios.get(
-      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
-      { headers: authHeader(token), params: { locationId } }
-    );
-    res.json(response.data);
-  } catch (e) {
-    console.error(`Failed to fetch fields for object ${objectKey}:`, e?.response?.data || e.message);
-    res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
-  }
-});
 // Generate dynamic records template for a specific object
 app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
   const locationId = req.locationId;
@@ -845,14 +824,21 @@ app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
       { headers: authHeader(token), params: { locationId } }
     );
     
+    console.log('Fields API Response:', JSON.stringify(fieldsResponse.data, null, 2));
+    
     // Extract field keys from the response
     const fields = fieldsResponse.data?.customFields || [];
+    console.log('Extracted fields:', fields);
+    
     const fieldKeys = fields.map(field => {
-      // Use the actual field key, fallback to name if key doesn't exist
-      return field.key || field.name || field.fieldKey;
+      const key = field.key || field.name || field.fieldKey || field.id;
+      console.log('Field mapping:', field, '-> key:', key);
+      return key;
     }).filter(Boolean);
     
-    // Generate CSV with just headers and one empty row for user to fill
+    console.log('Final fieldKeys:', fieldKeys);
+    
+    // Generate CSV with headers and empty row
     const headers = ['object_key', 'external_id', ...fieldKeys];
     const emptyRow = [cleanKey, '', ...fieldKeys.map(() => '')];
     
