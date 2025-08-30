@@ -14,7 +14,7 @@ import { InstallsDB } from './database.js';
 
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
-app.set('trust proxy', 1); // trust CF + Render chain
+app.set('trust proxy', true); // trust CF + Render chain
 app.disable('x-powered-by');
 
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
@@ -73,9 +73,12 @@ const allowedList = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://l
   .map(s => s.trim())
   .filter(Boolean);
 
-// allow Lovable sandbox subdomains like https://<uuid>.sandbox.lovable.dev
+// allow Lovable (new) preview domains and old sandbox domains
 const allowedRegexes = [
+  // old-style sandboxes, e.g. https://<uuid>.sandbox.lovable.dev
   /^https:\/\/[a-f0-9-]+\.sandbox\.lovable\.dev$/i,
+  // new preview domains (handles preview--*, id-preview--*, nested, etc.)
+  /^https:\/\/([a-z0-9-]+\.)*lovable\.app$/i,
 ];
 
 function isAllowedOrigin(origin) {
