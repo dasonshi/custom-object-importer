@@ -828,7 +828,48 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
   }
 });
-
+// Generate dynamic records template for a specific object
+app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  let { objectKey } = req.params;
+  
+  try {
+    const token = await withAccessToken(locationId);
+    
+    // Get the object's custom fields
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    const fieldsResponse = await axios.get(
+      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
+      { headers: authHeader(token), params: { locationId } }
+    );
+    
+    // Extract field keys from the response
+    const fields = fieldsResponse.data?.customFields || [];
+    const fieldKeys = fields.map(field => {
+      // Use the actual field key, fallback to name if key doesn't exist
+      return field.key || field.name || field.fieldKey;
+    }).filter(Boolean);
+    
+    // Generate CSV with just headers and one empty row for user to fill
+    const headers = ['object_key', 'external_id', ...fieldKeys];
+    const emptyRow = [cleanKey, '', ...fieldKeys.map(() => '')];
+    
+    const csvContent = [
+      headers.join(','),
+      emptyRow.join(',')
+    ].join('\n');
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${cleanKey}_records_template.csv"`);
+    res.send(csvContent);
+    
+  } catch (e) {
+    console.error(`Failed to generate template for ${objectKey}:`, e?.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to generate template' });
+  }
+});
 // Serve CSV templates
 app.get('/templates/:type', (req, res) => {
   const { type } = req.params;
