@@ -720,6 +720,15 @@ try {
     });
   }
 });
+app.get('/api/debug/cookies', (req, res) => {
+  res.json({
+    origin: req.get('origin') || null,
+    hasSigned: Boolean(req.signedCookies?.ghl_location),
+    hasUnsigned: Boolean(req.cookies?.ghl_location),
+    valuePreview: (req.signedCookies?.ghl_location || req.cookies?.ghl_location || '').slice(0, 8),
+  });
+});
+
 // ===== Error Handling =====
 // Basic entry points
 app.get('/', (req, res) => {
