@@ -840,14 +840,17 @@ app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
     const token = await withAccessToken(locationId);
     
     // Get the object's custom fields
-    const cleanKey = objectKey.replace(/^custom_objects\./, '');
-    const apiObjectKey = `custom_objects.${cleanKey}`;
-    
-    const fieldsResponse = await axios.get(
-      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
-      { headers: authHeader(token), params: { locationId } }
-    );
-    
+const cleanKey = objectKey.replace(/^custom_objects\./, '');
+const apiObjectKey = `custom_objects.${cleanKey}`;
+
+console.log(`Template request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
+
+const fieldsResponse = await axios.get(
+  `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
+  { headers: authHeader(token), params: { locationId } }
+);
+
+console.log('Full template API response:', JSON.stringify(fieldsResponse.data, null, 2));    
 // Extract field keys - the fields are directly in customFields array
 const fields = fieldsResponse.data?.customFields || [];
 console.log('Template API Response fields:', fields);
