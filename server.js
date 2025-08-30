@@ -108,7 +108,8 @@ app.use((req, res, next) => {
 app.use('/oauth', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
-  trustProxy: true,
+  standardHeaders: true,
+  legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Too many OAuth requests, please try again later' }
 }));
@@ -116,7 +117,8 @@ app.use('/oauth', rateLimit({
 app.use('/import', rateLimit({
   windowMs: 60 * 1000,
   max: 3,
-  trustProxy: true,
+  standardHeaders: true,
+  legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Too many import requests, please slow down' }
 }));
@@ -124,10 +126,12 @@ app.use('/import', rateLimit({
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
-  trustProxy: true,
+  standardHeaders: true,
+  legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
+
 const API_BASE = 'https://services.leadconnectorhq.com';
 // Generate encryption key from APP_SECRET
 const ENC_KEY = crypto.createHash('sha256')
@@ -329,6 +333,34 @@ app.post('/api/auth/logout', (req, res) => {
 res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
   res.json({ message: 'Logged out successfully' });
 });
+// Disconnect and clear installation
+app.post('/api/auth/disconnect', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  
+  try {
+    // Remove installation from database
+    await installs.delete(locationId);
+    
+    // Clear cookies
+    res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
+    {
+      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+      res.append(
+        'Set-Cookie',
+        `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
+      );
+    }
+    
+    res.json({ 
+      message: 'Disconnected successfully',
+      redirectUrl: '/oauth/install' // Frontend can redirect here for reauth
+    });
+  } catch (e) {
+    console.error('Disconnect error:', e.message);
+    res.status(500).json({ error: 'Failed to disconnect' });
+  }
+});
+
 app.get('/oauth/callback', async (req, res) => {
   const { code, state } = req.query;
   
@@ -752,13 +784,27 @@ app.get('/api/objects', requireAuth, async (req, res) => {
       `${API_BASE}/objects/`,
       { headers: authHeader(token), params: { locationId } }
     );
-    res.json(r.data);
+    
+    // Filter to only custom objects (exclude standard objects like contact, opportunity, business)
+    const allObjects = Array.isArray(r.data?.objects) ? r.data.objects : 
+                      Array.isArray(r.data?.data) ? r.data.data : 
+                      Array.isArray(r.data) ? r.data : [];
+    
+    const customObjects = allObjects.filter(obj => 
+      obj.key && obj.key.startsWith('custom_objects.') && 
+      !['contact', 'opportunity', 'business'].includes(obj.key.replace('custom_objects.', ''))
+    );
+    
+    res.json({
+      ...r.data,
+      objects: customObjects,
+      data: customObjects // support both response formats
+    });
   } catch (e) {
     console.error('objects lookup error:', e?.response?.status, e?.response?.data || e.message);
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
-});
-// Get custom fields for a specific object key
+});// Get custom fields for a specific object key
 app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
