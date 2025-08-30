@@ -805,20 +805,19 @@ app.get('/api/objects', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
 });// Get custom fields for a specific object key
+// Get custom fields for a specific object key
 app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
   const locationId = req.locationId;
-  const { objectKey } = req.params;
+  let { objectKey } = req.params;
   
   try {
     const token = await withAccessToken(locationId);
     
-    // Ensure object key has the required prefix
-    const fullObjectKey = objectKey.startsWith('custom_objects.') 
-      ? objectKey 
-      : `custom_objects.${objectKey}`;
+    // Use the objectKey as-is if it already has the prefix, otherwise add it
+    const apiObjectKey = objectKey.includes('custom_objects.') ? objectKey : `custom_objects.${objectKey}`;
     
     const response = await axios.get(
-      `${API_BASE}/custom-fields/object-key/${fullObjectKey}`,
+      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
       { headers: authHeader(token), params: { locationId } }
     );
     res.json(response.data);
