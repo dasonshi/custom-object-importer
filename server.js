@@ -808,6 +808,7 @@ app.get('/api/objects', requireAuth, async (req, res) => {
 
 // Get custom fields for a specific object key
 // Generate dynamic records template for a specific object
+// Generate dynamic records template for a specific object
 app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   let { objectKey } = req.params;
@@ -824,16 +825,18 @@ app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
       { headers: authHeader(token), params: { locationId } }
     );
     
-    console.log('Fields API Response:', JSON.stringify(fieldsResponse.data, null, 2));
-    
-    // Extract field keys from the response
+    // Extract field keys - the fields are directly in customFields array
     const fields = fieldsResponse.data?.customFields || [];
-    console.log('Extracted fields:', fields);
     
     const fieldKeys = fields.map(field => {
-      const key = field.key || field.name || field.fieldKey || field.id;
-      console.log('Field mapping:', field, '-> key:', key);
-      return key;
+      // Extract just the field name from the full fieldKey
+      // "custom_objects.tours.tour" -> "tour"
+      // "custom_objects.tours.supplier_email" -> "supplier_email"  
+      if (field.fieldKey) {
+        const parts = field.fieldKey.split('.');
+        return parts[parts.length - 1]; // Get the last part
+      }
+      return field.name?.toLowerCase().replace(/[^a-z0-9]/g, '_') || field.id;
     }).filter(Boolean);
     
     console.log('Final fieldKeys:', fieldKeys);
@@ -855,8 +858,7 @@ app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
     console.error(`Failed to generate template for ${objectKey}:`, e?.response?.data || e.message);
     res.status(500).json({ error: 'Failed to generate template' });
   }
-});
-// Serve CSV templates
+});// Serve CSV templates
 app.get('/templates/:type', (req, res) => {
   const { type } = req.params;
   
