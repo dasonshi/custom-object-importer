@@ -853,6 +853,9 @@ const fieldsResponse = await axios.get(
 console.log('Full template API response:', JSON.stringify(fieldsResponse.data, null, 2));    
 // Extract field keys - the fields are directly in customFields array
 const fields = fieldsResponse.data?.fields || [];
+console.log('fieldsResponse.data keys:', Object.keys(fieldsResponse.data || {}));
+console.log('fieldsResponse.data.fields type:', typeof fieldsResponse.data?.fields);
+console.log('fieldsResponse.data.fields length:', fieldsResponse.data?.fields?.length);
 console.log('Template API Response fields:', fields);
 
 const fieldKeys = fields.map(field => {
