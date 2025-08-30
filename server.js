@@ -848,19 +848,24 @@ app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
       { headers: authHeader(token), params: { locationId } }
     );
     
-    // Extract field keys - the fields are directly in customFields array
-    const fields = fieldsResponse.data?.customFields || [];
-    
-    const fieldKeys = fields.map(field => {
-      // Extract just the field name from the full fieldKey
-      // "custom_objects.tours.tour" -> "tour"
-      // "custom_objects.tours.supplier_email" -> "supplier_email"  
-      if (field.fieldKey) {
-        const parts = field.fieldKey.split('.');
-        return parts[parts.length - 1]; // Get the last part
-      }
-      return field.name?.toLowerCase().replace(/[^a-z0-9]/g, '_') || field.id;
-    }).filter(Boolean);
+// Extract field keys - the fields are directly in customFields array
+const fields = fieldsResponse.data?.customFields || [];
+console.log('Template API Response fields:', fields);
+
+const fieldKeys = fields.map(field => {
+  console.log('Processing field:', field);
+  // Extract just the field name from the full fieldKey
+  if (field.fieldKey) {
+    const parts = field.fieldKey.split('.');
+    const extracted = parts[parts.length - 1];
+    console.log('Extracted from fieldKey:', field.fieldKey, '->', extracted);
+    return extracted;
+  }
+  // Fallback to sanitized name
+  const fallback = field.name?.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  console.log('Using fallback name:', field.name, '->', fallback);
+  return fallback || field.id;
+}).filter(Boolean);
     
     console.log('Final fieldKeys:', fieldKeys);
     
