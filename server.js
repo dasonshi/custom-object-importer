@@ -805,7 +805,30 @@ app.get('/api/objects', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
 });
-
+// Get custom fields for a specific object key
+app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  let { objectKey } = req.params;
+  
+  try {
+    const token = await withAccessToken(locationId);
+    
+    // Always ensure we have the correct format by removing any existing prefix and adding it back
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    console.log(`Fields request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
+    
+    const response = await axios.get(
+      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
+      { headers: authHeader(token), params: { locationId } }
+    );
+    res.json(response.data);
+  } catch (e) {
+    console.error(`Failed to fetch fields for object ${objectKey}:`, e?.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
+  }
+});
 // Get custom fields for a specific object key
 // Generate dynamic records template for a specific object
 // Generate dynamic records template for a specific object
