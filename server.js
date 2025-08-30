@@ -232,7 +232,7 @@ function verifySecureState(state) {
 // Authentication middleware functions
 // Authentication middleware functions
 async function requireAuth(req, res, next) {
-  const locationId = req.signedCookies?.ghl_location;
+const locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location;
 
   if (!locationId) {
     return res.status(401).json({
@@ -380,6 +380,15 @@ res.cookie('ghl_location', locationId, {
   signed: true,
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
+
+// 👇 add this immediately after to support cross-site (Lovable) requests in Chrome
+{
+  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+  res.append(
+    'Set-Cookie',
+    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+  );
+}
 
 // Add a CHIPS/Partitioned cookie so Chrome will send it cross-site from Lovable
 {
