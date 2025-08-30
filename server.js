@@ -68,20 +68,29 @@ const COOKIE_CLEAR_OPTS = {
 };
 
 // CORS configuration
-const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:8080').split(',').map(s => s.trim()).filter(Boolean);
+const allowedList = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:8080')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// allow Lovable sandbox subdomains like https://<uuid>.sandbox.lovable.dev
+const allowedRegexes = [
+  /^https:\/\/[a-f0-9-]+\.sandbox\.lovable\.dev$/i,
+];
+
+function isAllowedOrigin(origin) {
+  if (allowedList.includes(origin)) return true;
+  return allowedRegexes.some(rx => rx.test(origin));
+}
+
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error('CORS policy violation'));
-    }
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // Postman/mobile/no CORS
+    if (isAllowedOrigin(origin)) return cb(null, true);
+    console.warn(`CORS blocked origin: ${origin}`);
+    cb(new Error('CORS policy violation'));
   },
-  credentials: true // Allow cookies
+  credentials: true, // allow cookies
 }));
 // Allow embedding inside HighLevel
 app.use((req, res, next) => {
@@ -218,27 +227,35 @@ function verifySecureState(state) {
   return payload;
 }
 // Authentication middleware functions
+// Authentication middleware functions
 async function requireAuth(req, res, next) {
   const locationId = req.signedCookies?.ghl_location;
-  
+
   if (!locationId) {
-    return res.status(401).json({ 
+    return res.status(401).json({
       error: 'Authentication required',
       message: 'Please complete OAuth setup first'
     });
   }
-  
+
   // Verify this location still has valid tokens
   const hasInstall = await installs.has(locationId);
   if (!hasInstall) {
-    // Clear invalid cookie
-res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
-    return res.status(401).json({ 
+    // Clear invalid cookies (signed + partitioned)
+    res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
+    {
+      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+      res.append(
+        'Set-Cookie',
+        `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
+      );
+    }
+    return res.status(401).json({
       error: 'Installation not found',
       message: 'Please re-authenticate'
     });
   }
-  
+
   req.locationId = locationId;
   next();
 }
@@ -360,6 +377,16 @@ res.cookie('ghl_location', locationId, {
   signed: true,
   maxAge: 7 * 24 * 60 * 60 * 1000
 });
+
+// Add a CHIPS/Partitioned cookie so Chrome will send it cross-site from Lovable
+{
+  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+  res.append(
+    'Set-Cookie',
+    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+  );
+}
+
 
     res.send(`<!doctype html><html><body style="font-family:system-ui;padding:24px">
       <h1>✅ Connected Successfully</h1>
