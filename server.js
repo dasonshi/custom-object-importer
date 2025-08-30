@@ -804,7 +804,8 @@ app.get('/api/objects', requireAuth, async (req, res) => {
     console.error('objects lookup error:', e?.response?.status, e?.response?.data || e.message);
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
-});// Get custom fields for a specific object key
+});
+
 // Get custom fields for a specific object key
 app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
   const locationId = req.locationId;
@@ -813,8 +814,9 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
   try {
     const token = await withAccessToken(locationId);
     
-    // Use the objectKey as-is if it already has the prefix, otherwise add it
-    const apiObjectKey = objectKey.includes('custom_objects.') ? objectKey : `custom_objects.${objectKey}`;
+    // Always ensure we have the correct format by removing any existing prefix and adding it back
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
     
     const response = await axios.get(
       `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
