@@ -14,7 +14,7 @@ import { InstallsDB } from './database.js';
 
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
-app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']); // trust CF + Render chain
+app.set('trust proxy', true); // trust CF + Render chain
 app.disable('x-powered-by');
 
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
@@ -128,7 +128,7 @@ app.use(rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS',
+  skip: (req) => req.method === 'OPTIONS' || req.path === '/health',
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 
