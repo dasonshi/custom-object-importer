@@ -14,7 +14,7 @@ import { InstallsDB } from './database.js';
 
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
-app.set('trust proxy', true); // trust CF + Render chain
+app.set('trust proxy', 1); // trust CF + Render chain
 app.disable('x-powered-by');
 
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
