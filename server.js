@@ -1130,20 +1130,23 @@ let action = 'created';
 
 if (recordId) {
   try {
-    // First verify the record exists using the exact endpoint format
-    await axios.get(
-      `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-      { 
-        headers,
-        params: { locationId }
-      }
-    );
-    
-// Record exists, update it
+// First verify the record exists using the exact endpoint format
+await axios.get(
+  `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+  { 
+    headers,
+    params: { locationId }
+  }
+);
+
+// Record exists, update it (PUT also needs locationId in query params)
 recordResult = await axios.put(
   `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
   requestBody,
-  { headers }
+  { 
+    headers,
+    params: { locationId }
+  }
 );
     action = 'updated';
   } catch (getError) {
