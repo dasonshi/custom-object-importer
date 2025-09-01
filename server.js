@@ -1675,71 +1675,71 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
 });
-// Debug route to check token scopes for a specific location
+// Fixed debug route to test all scopes
 app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
   const { locationId } = req.params;
   
   try {
-    // Check if installation exists
     const hasInstall = await installs.has(locationId);
     if (!hasInstall) {
-      return res.status(404).json({
-        error: 'Installation not found',
-        locationId
-      });
+      return res.status(404).json({ error: 'Installation not found', locationId });
     }
 
     const token = await withAccessToken(locationId);
-    
-    // Test various endpoints to see what scopes we have
-    const scopeTests = {
-      'objects.readonly': false,
-      'objects.write': false,
-      'customFields.readonly': false,
-      'customFields.write': false,
-      'customValues.readonly': false,
-      'customValues.write': false
-    };
-
     const headers = { ...authHeader(token) };
 
-    // Test objects read
+    const scopeTests = {
+      'objects/schema.readonly': false,
+      'objects/schema.write': false, 
+      'objects/record.readonly': false,
+      'objects/record.write': false,
+      'locations/customFields.readonly': false,
+      'locations/customFields.write': false,
+      'locations/customValues.readonly': false,
+      'locations/customValues.write': false
+    };
+
+    // Test objects schema read
     try {
       await axios.get(`${API_BASE}/objects/`, { headers, params: { locationId } });
-      scopeTests['objects.readonly'] = true;
-    } catch (e) {
-      console.log('Objects read failed:', e?.response?.status);
-    }
+      scopeTests['objects/schema.readonly'] = true;
+    } catch (e) { console.log('Objects schema read failed:', e?.response?.status); }
 
-    // Test custom fields read
+    // Test custom fields read  
     try {
       await axios.get(`${API_BASE}/custom-fields/`, { headers, params: { locationId } });
-      scopeTests['customFields.readonly'] = true;
-    } catch (e) {
-      console.log('Custom fields read failed:', e?.response?.status);
-    }
+      scopeTests['locations/customFields.readonly'] = true;
+    } catch (e) { console.log('Custom fields read failed:', e?.response?.status); }
 
     // Test custom values read
     try {
       await axios.get(`${API_BASE}/locations/${locationId}/customValues`, { headers });
-      scopeTests['customValues.readonly'] = true;
-    } catch (e) {
-      console.log('Custom values read failed:', e?.response?.status, e?.response?.data);
-    }
+      scopeTests['locations/customValues.readonly'] = true;
+    } catch (e) { console.log('Custom values read failed:', e?.response?.status, e?.response?.data?.message); }
 
-    // Get install details
+    // Test records read (need an existing object key)
+    try {
+      const objectsResp = await axios.get(`${API_BASE}/objects/`, { headers, params: { locationId } });
+      const objects = objectsResp.data?.objects || [];
+      if (objects.length > 0) {
+        const firstObjectKey = objects[0].key;
+        await axios.get(`${API_BASE}/objects/${firstObjectKey}/records`, { headers, params: { locationId } });
+        scopeTests['objects/record.readonly'] = true;
+      }
+    } catch (e) { console.log('Records read failed:', e?.response?.status); }
+
     const install = await installs.get(locationId);
     
     res.json({
       locationId,
       tokenExpiresAt: new Date(install.expires_at),
       scopeTests,
-      tokenPreview: token.substring(0, 20) + '...',
-      hasValidToken: true
+      tokenPreview: token.substring(0, 30) + '...',
+      installUrl: req.get('origin') + '/oauth/install'
     });
 
   } catch (e) {
-    console.error('Token scope debug error:', e?.response?.data || e.message);
+    
     res.status(500).json({
       error: 'Token scope debug failed',
       locationId,
