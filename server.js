@@ -1284,8 +1284,96 @@ app.post('/api/associations/types/import', requireAuth, upload.single('associati
     res.status(400).json({ error: 'Associations type import failed', details: e?.response?.data || e.message });
   }
 });
+// 5) Import Custom Values
+app.post('/api/custom-values/import', requireAuth, upload.single('customValues'), async (req, res) => {
+  const locationId = req.locationId;
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'Custom values CSV file is required' });
+  }
 
-// ===== Error Handling =====
+  try {
+    const token = await withAccessToken(locationId);
+    const headers = { ...authHeader(token) };
+    const customValues = await parseCSV(req.file.path);
+    
+    const created = [];
+    const updated = [];
+    const errors = [];
+
+    for (const row of customValues) {
+      try {
+        const payload = {
+          name: String(row.name || '').trim(),
+          value: String(row.value || '').trim()
+        };
+
+        if (!payload.name || !payload.value) {
+          throw new Error('Both name and value are required');
+        }
+
+        let result;
+        const customValueId = row.id ? String(row.id).trim() : null;
+
+        if (customValueId) {
+          // Update existing custom value
+          result = await axios.put(
+            `${API_BASE}/locations/${locationId}/customValues/${customValueId}`,
+            payload,
+            { headers }
+          );
+          updated.push({ 
+            id: customValueId, 
+            name: payload.name,
+            value: payload.value
+          });
+        } else {
+          // Create new custom value
+          result = await axios.post(
+            `${API_BASE}/locations/${locationId}/customValues`,
+            payload,
+            { headers }
+          );
+          created.push({ 
+            id: result.data?.id || result.data?.data?.id,
+            name: payload.name,
+            value: payload.value
+          });
+        }
+      } catch (e) {
+        errors.push({ 
+          name: row.name || 'unnamed', 
+          error: e?.response?.data || e.message 
+        });
+        console.error(`Failed to process custom value ${row.name}:`, e?.response?.data || e.message);
+      }
+    }
+
+    await fs.unlink(req.file.path).catch(() => {});
+
+    res.json({
+      success: errors.length === 0,
+      message: `Processed ${customValues.length} custom values`,
+      created,
+      updated,
+      errors,
+      summary: {
+        total: customValues.length,
+        created: created.length,
+        updated: updated.length,
+        failed: errors.length
+      }
+    });
+
+  } catch (e) {
+    console.error('Custom values import error:', e?.response?.data || e.message);
+    res.status(400).json({
+      error: 'Custom values import failed',
+      details: e?.response?.data || e.message
+    });
+  }
+});
+
 // ===== Error Handling =====
 // Basic entry points
 app.get('/', (req, res) => {
@@ -1390,6 +1478,26 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
   }
 });
+// Get custom values for location
+app.get('/api/custom-values', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  
+  try {
+    const token = await withAccessToken(locationId);
+    const response = await axios.get(
+      `${API_BASE}/locations/${locationId}/customValues`,
+      { headers: authHeader(token) }
+    );
+    
+    res.json(response.data);
+  } catch (e) {
+    console.error('Custom values fetch error:', e?.response?.data || e.message);
+    res.status(500).json({ 
+      error: 'Failed to fetch custom values', 
+      details: e?.response?.data || e.message 
+    });
+  }
+});
 // Get custom fields for a specific object key
 // Generate dynamic records template for a specific object
 // =======================
@@ -1453,6 +1561,22 @@ app.get('/templates/fields', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="fields-template.csv"');
+  res.send(csv);
+});
+// Custom values template: /templates/custom-values → custom-values-template.csv
+app.get('/templates/custom-values', (req, res) => {
+  const headers = [
+    'id',           // optional - for updates (leave empty for new records)
+    'name',         // required - custom field name
+    'value'         // required - custom field value
+  ];
+  
+  const example = ['', 'Custom Field Name', 'Value'];
+  const csv = [headers.join(','), example.join(',')].join('\n');
+  
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="custom-values-template.csv"');
   res.send(csv);
 });
 
