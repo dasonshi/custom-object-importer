@@ -674,12 +674,27 @@ try {
           catch { payload.options = (row.options || '').split('|').map(s => s.trim()).filter(Boolean); }
         }
 
-        const createField = await axios.post(
-          `${API_BASE}/objects/properties`,
-          { objectId: schemaId, ...payload },
-          { headers, params: { locationId } }
-        );
+const fieldPayload = {
+  locationId: locationId,
+  name: payload.label,
+  description: payload.helpText || "",
+  placeholder: "",
+  showInForms: true,
+  dataType: (payload.type || 'TEXT').toUpperCase(),
+fieldKey: `custom_objects.${row.object_key}.${payload.key}`,
+objectKey: `custom_objects.${row.object_key}`};
 
+if (payload.options) {
+  fieldPayload.options = Array.isArray(payload.options) 
+    ? payload.options.map(opt => typeof opt === 'string' ? { key: opt.toLowerCase(), label: opt } : opt)
+    : payload.options;
+}
+
+const createField = await axios.post(
+  `${API_BASE}/custom-fields/`,
+  fieldPayload,
+  { headers }
+);
         if (!fieldCacheBySchema[schemaId]) fieldCacheBySchema[schemaId] = {};
         fieldCacheBySchema[schemaId][key] =
           createField.data?.id || createField.data?.data?.id || createField.data?.property?.id;
@@ -706,20 +721,7 @@ try {
         const attributes = {};
 
         for (const [k, v] of Object.entries(row)) {
-          if (k === 'object_key' || k === 'external_id') continue;
-          attributes[k] = v === '' ? null : v;
-        }
 
-        try {
-          await axios.post(
-            `${API_BASE}/objects/records`,
-            { objectId: schemaId, externalId, attributes },
-            { headers, params: { locationId } }
-          );
-          recordsProcessed++;
-        } catch (e) {
-          console.error(`Failed to create record extId=${externalId}:`, e?.response?.data || e.message);
-          // continue
         }
       }
     }
@@ -760,7 +762,314 @@ app.get('/api/debug/cookies', (req, res) => {
     valuePreview: (req.signedCookies?.ghl_location || req.cookies?.ghl_location || '').slice(0, 8),
   });
 });
+// ===== Separate Import Routes =====
 
+// 1. Import Objects/Schemas Only
+app.post('/api/objects/import', requireAuth, upload.single('objects'), async (req, res) => {
+  const locationId = req.locationId;
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'Objects CSV file is required' });
+  }
+  
+  try {
+    const token = await withAccessToken(locationId);
+    const headers = { ...authHeader(token) };
+    const objects = await parseCSV(req.file.path);
+    const schemaIdByKey = {};
+    
+    // Get existing schemas
+    let existing = [];
+    try {
+      const listSchemas = await axios.get(
+        `${API_BASE}/objects/`,
+        { headers, params: { locationId } }
+      );
+      existing = Array.isArray(listSchemas.data?.objects)
+        ? listSchemas.data.objects
+        : Array.isArray(listSchemas.data?.data)
+          ? listSchemas.data.data
+          : Array.isArray(listSchemas.data) ? listSchemas.data : [];
+    } catch (e) {
+      if (e?.response?.status !== 404) throw e;
+      existing = [];
+    }
+
+    for (const sch of existing) {
+      if (sch?.key && sch?.id) schemaIdByKey[sch.key] = sch.id;
+    }
+
+    // Create missing schemas
+    const created = [];
+    for (const row of objects) {
+      const objectKey = String(row.object_key).trim();
+      if (!objectKey) {
+        console.warn('Skipping object row without object_key:', row);
+        continue;
+      }
+      
+      if (schemaIdByKey[objectKey]) {
+        console.log(`Schema ${objectKey} already exists, skipping`);
+        continue;
+      }
+
+      const singular = String(row.name || row.display_label || objectKey).trim();
+      const plural = String(row.plural || `${singular}s`).trim();
+      const fqObjectKey = objectKey.startsWith('custom_objects.')
+        ? objectKey
+        : `custom_objects.${objectKey}`;
+
+      const primaryKey = String(row.primary_display_field || 'name').trim();
+      const fqPrimaryKey = primaryKey.startsWith(`custom_objects.${objectKey}.`)
+        ? primaryKey
+        : `custom_objects.${objectKey}.${primaryKey}`;
+
+      const payload = {
+        labels: { singular, plural },
+        key: fqObjectKey,
+        description: row.description || '',
+        primaryDisplayPropertyDetails: {
+          key: fqPrimaryKey,
+          name: String(row.primary_display_label || 'Name'),
+          dataType: 'TEXT'
+        },
+        locationId
+      };
+
+      const createResp = await axios.post(`${API_BASE}/objects/`, payload, { headers });
+      const createdId = createResp.data?.id || createResp.data?.data?.id || createResp.data?.object?.id;
+      
+      if (createdId) {
+        schemaIdByKey[objectKey] = createdId;
+        created.push({ objectKey, id: createdId, name: singular });
+      }
+    }
+
+    await fs.unlink(req.file.path).catch(() => {});
+
+    res.json({
+      success: true,
+      message: `Processed ${objects.length} objects, created ${created.length} new schemas`,
+      created,
+      existing: Object.keys(schemaIdByKey).filter(key => !created.find(c => c.objectKey === key))
+    });
+
+  } catch (e) {
+    console.error('Objects import error:', e?.response?.data || e.message);
+    res.status(400).json({
+      error: 'Objects import failed',
+      details: e?.response?.data || e.message
+    });
+  }
+});
+
+// 2. Import Fields for a Specific Object
+app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fields'), async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'Fields CSV file is required' });
+  }
+
+  try {
+    const token = await withAccessToken(locationId);
+    const headers = { ...authHeader(token) };
+    
+    // Get the schema ID for this object
+    const listSchemas = await axios.get(
+      `${API_BASE}/objects/`,
+      { headers, params: { locationId } }
+    );
+    const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
+    const schema = objects.find(obj => obj.key === objectKey || obj.key === `custom_objects.${objectKey}`);
+    
+    if (!schema) {
+      return res.status(404).json({ error: `Object ${objectKey} not found` });
+    }
+
+    const fields = await parseCSV(req.file.path);
+    const created = [];
+    const errors = [];
+
+    for (const row of fields) {
+      const fieldKey = row.field_key;
+      if (!fieldKey) {
+        console.warn('Skipping field row without field_key:', row);
+        continue;
+      }
+
+      try {
+        const payload = {
+          key: fieldKey,
+          label: row.name || row.display_label || fieldKey,
+          type: row.type || 'text',
+          required: String(row.required).toLowerCase() === 'true',
+          helpText: row.help_text || undefined,
+          defaultValue: row.default_value || undefined,
+          unique: String(row.unique).toLowerCase() === 'true' || undefined
+        };
+
+        if (row.type === 'select' || row.type === 'multiselect') {
+          try { 
+            payload.options = JSON.parse(row.options); 
+          } catch { 
+            payload.options = (row.options || '').split('|').map(s => s.trim()).filter(Boolean); 
+          }
+        }
+
+const fieldPayload = {
+  locationId: locationId,
+  name: payload.label,
+  description: payload.helpText || "",
+  placeholder: "",
+  showInForms: true,
+  dataType: payload.type.toUpperCase(),
+  fieldKey: `custom_objects.${objectKey}.${payload.key}`,
+  objectKey: `custom_objects.${objectKey}`,
+  options: payload.options || undefined,
+  allowCustomOption: false
+};
+
+const createField = await axios.post(
+  `${API_BASE}/custom-fields/`,
+  fieldPayload,
+  { headers }
+);
+        created.push({ 
+          fieldKey, 
+          id: createField.data?.id || createField.data?.data?.id,
+          label: payload.label 
+        });
+      } catch (e) {
+        errors.push({ fieldKey, error: e?.response?.data || e.message });
+        console.error(`Failed to create field ${fieldKey}:`, e?.response?.data || e.message);
+      }
+    }
+
+    await fs.unlink(req.file.path).catch(() => {});
+
+    res.json({
+      success: true,
+      message: `Processed ${fields.length} fields for ${objectKey}`,
+      objectKey,
+      objectId: schema.id,
+      created,
+      errors
+    });
+
+  } catch (e) {
+    console.error('Fields import error:', e?.response?.data || e.message);
+    res.status(400).json({
+      error: 'Fields import failed',
+      details: e?.response?.data || e.message
+    });
+  }
+});
+
+// 3. Import Records for a Specific Object
+app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  if (!req.file) {
+    return res.status(400).json({ error: 'Records CSV file is required' });
+  }
+
+  try {
+    const token = await withAccessToken(locationId);
+    const headers = { ...authHeader(token) };
+    
+    // Get the full object key for API calls
+    const fullObjectKey = objectKey.startsWith('custom_objects.') 
+      ? objectKey 
+      : `custom_objects.${objectKey}`;
+
+    const records = await parseCSV(req.file.path);
+    const created = [];
+    const errors = [];
+
+    for (const row of records) {
+      try {
+        const properties = {};
+
+        for (const [k, v] of Object.entries(row)) {
+          if (['object_key', 'external_id', 'owner', 'followers'].includes(k)) continue;
+          if (v === '' || v === null || v === undefined) continue;
+          
+          // Handle different field types per GHL documentation
+          if (k.includes('money') || k.includes('currency')) {
+            properties[k] = {
+              currency: "default",
+              value: parseFloat(v) || 0
+            };
+          } else if (k.includes('_multi') || k.includes('_checkbox')) {
+            properties[k] = v.split(',').map(s => s.trim());
+          } else if (k.includes('_files')) {
+            properties[k] = [{ url: v }];
+          } else {
+            properties[k] = v;
+          }
+        }
+
+        // Build correct request body
+        const requestBody = {
+          locationId: locationId,
+          properties: properties
+        };
+
+        if (row.owner) {
+          requestBody.owner = row.owner.split(',').map(s => s.trim());
+        }
+        if (row.followers) {
+          requestBody.followers = row.followers.split(',').map(s => s.trim());
+        }
+
+        const createRecord = await axios.post(
+          `${API_BASE}/objects/${fullObjectKey}/records`,
+          requestBody,
+          { headers }
+        );
+
+        created.push({ 
+          externalId: row.external_id, 
+          id: createRecord.data?.id || createRecord.data?.data?.id,
+          properties: Object.keys(properties)
+        });
+      } catch (e) {
+        errors.push({ 
+          externalId: row.external_id, 
+          error: e?.response?.data || e.message 
+        });
+        console.error(`Failed to create record extId=${row.external_id}:`, e?.response?.data || e.message);
+      }
+    }
+
+    await fs.unlink(req.file.path).catch(() => {});
+
+    res.json({
+      success: true,
+      message: `Processed ${records.length} records for ${objectKey}`,
+      objectKey,
+      created,
+      errors,
+      summary: {
+        total: records.length,
+        successful: created.length,
+        failed: errors.length
+      }
+    });
+
+  } catch (e) {
+    console.error('Records import error:', e?.response?.data || e.message);
+    res.status(400).json({
+      error: 'Records import failed',
+      details: e?.response?.data || e.message
+    });
+  }
+});
+
+// ===== Error Handling =====
 // ===== Error Handling =====
 // Basic entry points
 app.get('/', (req, res) => {
