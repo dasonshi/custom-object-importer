@@ -1112,18 +1112,23 @@ for (const [k, v] of Object.entries(row)) {
           }
         }
 
-        // Build correct request body
-        const requestBody = {
-          locationId: locationId,
-          properties: properties
-        };
+// Build request body for CREATE (POST)
+const createRequestBody = {
+  locationId: locationId,
+  properties: properties
+};
 
-        if (row.owner) {
-          requestBody.owner = row.owner.split(',').map(s => s.trim());
-        }
-        if (row.followers) {
-          requestBody.followers = row.followers.split(',').map(s => s.trim());
-        }
+if (row.owner) {
+  createRequestBody.owner = row.owner.split(',').map(s => s.trim());
+}
+if (row.followers) {
+  createRequestBody.followers = row.followers.split(',').map(s => s.trim());
+}
+
+// Build request body for UPDATE (PUT) - only properties
+const updateRequestBody = {
+  properties: properties
+};
 
 let recordResult;
 let action = 'created';
@@ -1139,10 +1144,10 @@ await axios.get(
   }
 );
 
-// Record exists, update it (PUT also needs locationId in query params)
+// Record exists, update it (PUT only wants properties, locationId in query)
 recordResult = await axios.put(
   `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-  requestBody,
+  updateRequestBody,
   { 
     headers,
     params: { locationId }
@@ -1153,11 +1158,11 @@ recordResult = await axios.put(
     if (getError?.response?.status === 404) {
       console.log(`Record ID ${recordId} not found, creating new record instead`);
       // Record doesn't exist, create new one
-      recordResult = await axios.post(
-        `${API_BASE}/objects/${fullObjectKey}/records`,
-        requestBody,
-        { headers }
-      );
+recordResult = await axios.post(
+  `${API_BASE}/objects/${fullObjectKey}/records`,
+  createRequestBody,
+  { headers }
+);
       action = 'created (id not found)';
     } else {
       throw getError; // Re-throw other errors
@@ -1165,11 +1170,11 @@ recordResult = await axios.put(
   }
 } else {  
   // Create new record
-  recordResult = await axios.post(
-    `${API_BASE}/objects/${fullObjectKey}/records`,
-    requestBody,
-    { headers }
-  );
+recordResult = await axios.post(
+  `${API_BASE}/objects/${fullObjectKey}/records`,
+  createRequestBody,
+  { headers }
+);
 }
 created.push({ 
   externalId: row.external_id, 
