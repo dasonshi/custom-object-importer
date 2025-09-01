@@ -1675,7 +1675,78 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
 });
+// Debug route to check token scopes for a specific location
+app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
+  const { locationId } = req.params;
+  
+  try {
+    // Check if installation exists
+    const hasInstall = await installs.has(locationId);
+    if (!hasInstall) {
+      return res.status(404).json({
+        error: 'Installation not found',
+        locationId
+      });
+    }
 
+    const token = await withAccessToken(locationId);
+    
+    // Test various endpoints to see what scopes we have
+    const scopeTests = {
+      'objects.readonly': false,
+      'objects.write': false,
+      'customFields.readonly': false,
+      'customFields.write': false,
+      'customValues.readonly': false,
+      'customValues.write': false
+    };
+
+    const headers = { ...authHeader(token) };
+
+    // Test objects read
+    try {
+      await axios.get(`${API_BASE}/objects/`, { headers, params: { locationId } });
+      scopeTests['objects.readonly'] = true;
+    } catch (e) {
+      console.log('Objects read failed:', e?.response?.status);
+    }
+
+    // Test custom fields read
+    try {
+      await axios.get(`${API_BASE}/custom-fields/`, { headers, params: { locationId } });
+      scopeTests['customFields.readonly'] = true;
+    } catch (e) {
+      console.log('Custom fields read failed:', e?.response?.status);
+    }
+
+    // Test custom values read
+    try {
+      await axios.get(`${API_BASE}/locations/${locationId}/customValues`, { headers });
+      scopeTests['customValues.readonly'] = true;
+    } catch (e) {
+      console.log('Custom values read failed:', e?.response?.status, e?.response?.data);
+    }
+
+    // Get install details
+    const install = await installs.get(locationId);
+    
+    res.json({
+      locationId,
+      tokenExpiresAt: new Date(install.expires_at),
+      scopeTests,
+      tokenPreview: token.substring(0, 20) + '...',
+      hasValidToken: true
+    });
+
+  } catch (e) {
+    console.error('Token scope debug error:', e?.response?.data || e.message);
+    res.status(500).json({
+      error: 'Token scope debug failed',
+      locationId,
+      details: e?.response?.data || e.message
+    });
+  }
+});
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
