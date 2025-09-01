@@ -1133,7 +1133,7 @@ if (recordId) {
   recordResult = await axios.patch(
     `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
     requestBody,
-    { headers, params: { locationId } }
+    { headers }
   );
   action = 'updated';
 } else {
