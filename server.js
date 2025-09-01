@@ -677,13 +677,46 @@ try {
 const fieldPayload = {
   locationId: locationId,
   name: payload.label,
-  description: payload.helpText || "",
-  placeholder: "",
-  showInForms: true,
+  description: payload.helpText || row.description || "",
+  placeholder: row.placeholder || "",
+  showInForms: row.show_in_forms !== undefined ? String(row.show_in_forms).toLowerCase() === 'true' : true,
   dataType: (payload.type || 'TEXT').toUpperCase(),
-fieldKey: `custom_objects.${row.object_key}.${payload.key}`,
-objectKey: `custom_objects.${row.object_key}`};
+  fieldKey: `custom_objects.${objectKey}.${payload.key}`,
+  objectKey: `custom_objects.${objectKey}`
+};
 
+// Add optional attributes if provided
+if (row.accepted_formats) {
+  fieldPayload.acceptedFormats = row.accepted_formats;
+}
+
+if (row.max_file_limit) {
+  fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
+}
+
+if (row.allow_custom_option !== undefined) {
+  fieldPayload.allowCustomOption = String(row.allow_custom_option).toLowerCase() === 'true';
+}
+
+if (row.parent_id) {
+  fieldPayload.parentId = row.parent_id;
+}
+
+if (payload.options) {
+  fieldPayload.options = Array.isArray(payload.options) 
+    ? payload.options.map(opt => {
+        if (typeof opt === 'string') {
+          return { key: opt.toLowerCase(), label: opt };
+        }
+        // Handle objects with key, label, and optional url
+        return {
+          key: opt.key || opt.label?.toLowerCase() || opt,
+          label: opt.label || opt.key || opt,
+          ...(opt.url && { url: opt.url })
+        };
+      })
+    : payload.options;
+}
 if (payload.options) {
   fieldPayload.options = Array.isArray(payload.options) 
     ? payload.options.map(opt => typeof opt === 'string' ? { key: opt.toLowerCase(), label: opt } : opt)
@@ -921,16 +954,46 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
 const fieldPayload = {
   locationId: locationId,
   name: payload.label,
-  description: payload.helpText || "",
-  placeholder: "",
-  showInForms: true,
-  dataType: payload.type.toUpperCase(),
+  description: payload.helpText || row.description || "",
+  placeholder: row.placeholder || "",
+  showInForms: row.show_in_forms !== undefined ? String(row.show_in_forms).toLowerCase() === 'true' : true,
+  dataType: (payload.type || 'TEXT').toUpperCase(),
   fieldKey: `custom_objects.${objectKey}.${payload.key}`,
-  objectKey: `custom_objects.${objectKey}`,
-  options: payload.options || undefined,
-  allowCustomOption: false
+  objectKey: `custom_objects.${objectKey}`
 };
 
+// Add optional attributes if provided
+if (row.accepted_formats) {
+  fieldPayload.acceptedFormats = row.accepted_formats;
+}
+
+if (row.max_file_limit) {
+  fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
+}
+
+if (row.allow_custom_option !== undefined) {
+  fieldPayload.allowCustomOption = String(row.allow_custom_option).toLowerCase() === 'true';
+}
+
+if (row.parent_id) {
+  fieldPayload.parentId = row.parent_id;
+}
+
+if (payload.options) {
+  fieldPayload.options = Array.isArray(payload.options) 
+    ? payload.options.map(opt => {
+        if (typeof opt === 'string') {
+          return { key: opt.toLowerCase(), label: opt };
+        }
+        // Handle objects with key, label, and optional url
+        return {
+          key: opt.key || opt.label?.toLowerCase() || opt,
+          label: opt.label || opt.key || opt,
+          ...(opt.url && { url: opt.url })
+        };
+      })
+    : payload.options;
+}
 const createField = await axios.post(
   `${API_BASE}/custom-fields/`,
   fieldPayload,
@@ -1121,6 +1184,7 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
   
   try {
     const token = await withAccessToken(locationId);
+    const headers = { ...authHeader(token) };
     
     // Always ensure we have the correct format by removing any existing prefix and adding it back
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
@@ -1132,7 +1196,42 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
       `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
       { headers: authHeader(token), params: { locationId } }
     );
-    res.json(response.data);
+    
+    const fields = response.data?.fields || [];
+    
+    // Get unique parent IDs that exist
+    const parentIds = [...new Set(fields.map(f => f.parentId).filter(Boolean))];
+    
+    // Fetch folder details for each parent ID
+    const folders = {};
+    for (const parentId of parentIds) {
+      try {
+        const folderResponse = await axios.get(
+          `${API_BASE}/custom-fields/${parentId}`,
+          { headers }
+        );
+        folders[parentId] = {
+          id: parentId,
+          name: folderResponse.data?.name || folderResponse.data?.data?.name || `Folder ${parentId}`,
+          ...folderResponse.data
+        };
+      } catch (e) {
+        console.error(`Failed to fetch folder ${parentId}:`, e?.response?.data || e.message);
+        folders[parentId] = { id: parentId, name: `Unknown Folder ${parentId}` };
+      }
+    }
+    
+    // Enhance fields with folder information
+    const enhancedFields = fields.map(field => ({
+      ...field,
+      folder: field.parentId ? folders[field.parentId] : null
+    }));
+    
+    res.json({
+      ...response.data,
+      fields: enhancedFields,
+      folders: Object.values(folders)
+    });
   } catch (e) {
     console.error(`Failed to fetch fields for object ${objectKey}:`, e?.response?.data || e.message);
     res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
@@ -1217,7 +1316,66 @@ app.get('/templates/:type', (req, res) => {
     }
   });
 });
+// Generate fields template with all optional attributes
+app.get('/api/objects/fields/template', (req, res) => {
+  const headers = [
+    'object_key',           // required - which object this field belongs to
+    'field_key',            // required - unique field identifier
+    'name',                 // required - display name
+    'type',                 // required - field type (text, select, etc.)
+    'description',          // optional - field description
+    'placeholder',          // optional - placeholder text
+    'show_in_forms',        // optional - true/false (defaults to true)
+    'required',             // optional - true/false
+    'help_text',            // optional - help text
+    'default_value',        // optional - default value
+    'unique',               // optional - true/false
+    'options',              // optional - for select/multiselect (JSON or pipe-separated)
+    'accepted_formats',     // optional - for file uploads (.pdf, .jpg, etc.)
+    'max_file_limit',       // optional - for file uploads (number)
+    'allow_custom_option',  // optional - for radio fields (true/false)
+    'parent_id'             // optional - parent folder ID
+  ];
+    // one empty row as a template
+  const emptyRow = new Array(headers.length).fill('');
+  const csvContent = [headers.join(','), emptyRow.join(',')].join('\n');
 
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="fields_template.csv"');
+  res.send(csvContent);
+});
+
+  
+// Generate fields template with all optional attributes
+app.get('/api/objects/fields/template', (req, res) => {
+  const headers = [
+    'object_key',           // required - which object this field belongs to
+    'field_key',            // required - unique field identifier  
+    'name',                 // required - display name
+    'type',                 // required - field type (text, select, multiselect, etc.)
+    'description',          // optional - field description
+    'placeholder',          // optional - placeholder text
+    'show_in_forms',        // optional - true/false (defaults to true)
+    'required',             // optional - true/false
+    'help_text',            // optional - help text
+    'default_value',        // optional - default value
+    'unique',               // optional - true/false
+    'options',              // optional - for select/multiselect: pipe-separated (Option1|Option2|Option3)
+    'accepted_formats',     // optional - for file uploads (.pdf, .jpg, etc.)
+    'max_file_limit',       // optional - for file uploads (number)
+    'allow_custom_option',  // optional - for radio fields (true/false)
+    'parent_id'             // optional - parent folder ID
+  ];
+
+  const csvContent = [
+    headers.join(','),
+    exampleRow.join(',')
+  ].join('\n');
+  
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="fields_template.csv"');
+  res.send(csvContent);
+});
 // ===== Server Startup =====
 validateEncryptionSetup();
 
