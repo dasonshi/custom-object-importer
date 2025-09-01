@@ -1309,148 +1309,127 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
 });
 // Get custom fields for a specific object key
 // Generate dynamic records template for a specific object
-// Generate dynamic records template for a specific object
-app.get('/api/objects/:objectKey/template', requireAuth, async (req, res) => {
+// =======================
+// Consolidated CSV Templates
+// =======================
+
+// Objects template: /templates/objects  → objects-template.csv
+app.get('/templates/objects', (req, res) => {
+  const headers = [
+    'object_key',              // e.g., products
+    'name',                    // singular label
+    'plural',                  // plural label
+    'description',             // optional
+    'primary_display_field',   // e.g., name
+    'primary_display_label'    // e.g., Name
+  ];
+  const emptyRow = new Array(headers.length).fill('');
+  const csv = [headers.join(','), emptyRow.join(',')].join('\n');
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="objects-template.csv"');
+  res.send(csv);
+});
+
+// Fields template: /templates/fields  → fields-template.csv (full header incl. optionals)
+app.get('/templates/fields', (req, res) => {
+  const headers = [
+    'object_key',           // which object this field belongs to
+    'field_key',            // unique field identifier
+    'name',                 // display name
+    'type',                 // text | select | multiselect | file | radio | ...
+    'description',          // optional
+    'placeholder',          // optional
+    'show_in_forms',        // true/false (defaults true)
+    'required',             // true/false
+    'help_text',            // optional
+    'default_value',        // optional
+    'unique',               // true/false
+    'options',              // for select/multiselect (Option1|Option2|Option3)
+    'accepted_formats',     // for file uploads (.pdf|.jpg)
+    'max_file_limit',       // for file uploads (number)
+    'allow_custom_option',  // for radio fields (true/false)
+    'parent_id'             // parent folder ID
+  ];
+  const emptyRow = new Array(headers.length).fill('');
+  const csv = [headers.join(','), emptyRow.join(',')].join('\n');
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="fields-template.csv"');
+  res.send(csv);
+});
+
+// Records template (dynamic): /templates/records/:objectKey  → <objectKey>-template.csv
+// NOTE: requires auth because we introspect fields via GHL API
+app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   let { objectKey } = req.params;
-  
+
   try {
     const token = await withAccessToken(locationId);
-    
-    // Get the object's custom fields
-const cleanKey = objectKey.replace(/^custom_objects\./, '');
-const apiObjectKey = `custom_objects.${cleanKey}`;
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
 
-console.log(`Template request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
+    console.log(`Template request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
 
-const fieldsResponse = await axios.get(
-  `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
-  { headers: authHeader(token), params: { locationId } }
-);
+    const fieldsResponse = await axios.get(
+      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
+      { headers: authHeader(token), params: { locationId } }
+    );
 
-console.log('Full template API response:', JSON.stringify(fieldsResponse.data, null, 2));    
-// Extract field keys - the fields are directly in customFields array
-const fields = fieldsResponse.data?.fields || [];
-console.log('fieldsResponse.data keys:', Object.keys(fieldsResponse.data || {}));
-console.log('fieldsResponse.data.fields type:', typeof fieldsResponse.data?.fields);
-console.log('fieldsResponse.data.fields length:', fieldsResponse.data?.fields?.length);
-console.log('Template API Response fields:', fields);
+    // Depending on API shape: fields under data.fields OR fields
+    const fields = Array.isArray(fieldsResponse.data?.fields)
+      ? fieldsResponse.data.fields
+      : Array.isArray(fieldsResponse.data?.data?.fields)
+      ? fieldsResponse.data.data.fields
+      : [];
 
-const fieldKeys = fields.map(field => {
-  console.log('Processing field:', field);
-  // Extract just the field name from the full fieldKey
-  if (field.fieldKey) {
-    const parts = field.fieldKey.split('.');
-    const extracted = parts[parts.length - 1];
-    console.log('Extracted from fieldKey:', field.fieldKey, '->', extracted);
-    return extracted;
-  }
-  // Fallback to sanitized name
-  const fallback = field.name?.toLowerCase().replace(/[^a-z0-9]/g, '_');
-  console.log('Using fallback name:', field.name, '->', fallback);
-  return fallback || field.id;
-}).filter(Boolean);
-    
-    console.log('Final fieldKeys:', fieldKeys);
-    
-    // Generate CSV with headers and empty row
-    const headers = ['object_key', 'external_id', ...fieldKeys];
-    const emptyRow = [cleanKey, '', ...fieldKeys.map(() => '')];
-    
-    const csvContent = [
-      headers.join(','),
-      emptyRow.join(',')
-    ].join('\n');
-    
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${cleanKey}_records_template.csv"`);
-    res.send(csvContent);
-    
-  } catch (e) {
-    console.error(`Failed to generate template for ${objectKey}:`, e?.response?.data || e.message);
-    res.status(500).json({ error: 'Failed to generate template' });
-  }
-});// Serve CSV templates
-app.get('/templates/:type', (req, res) => {
-  const { type } = req.params;
-  
-  if (!['objects', 'fields', 'records'].includes(type)) {
-    return res.status(404).json({ error: 'Template not found' });
-  }
-  
-  const templatePath = `./templates/${type}.csv`;
-  res.download(templatePath, `${type}_template.csv`, (err) => {
-    if (err) {
-      console.error(`Template download error for ${type}:`, err.message);
-      res.status(404).json({ error: 'Template file not found' });
-    }
-  });
-});
-// Generate fields template with all optional attributes
-app.get('/api/objects/fields/template', (req, res) => {
-  const headers = [
-    'object_key',           // required - which object this field belongs to
-    'field_key',            // required - unique field identifier
-    'name',                 // required - display name
-    'type',                 // required - field type (text, select, etc.)
-    'description',          // optional - field description
-    'placeholder',          // optional - placeholder text
-    'show_in_forms',        // optional - true/false (defaults to true)
-    'required',             // optional - true/false
-    'help_text',            // optional - help text
-    'default_value',        // optional - default value
-    'unique',               // optional - true/false
-    'options',              // optional - for select/multiselect (JSON or pipe-separated)
-    'accepted_formats',     // optional - for file uploads (.pdf, .jpg, etc.)
-    'max_file_limit',       // optional - for file uploads (number)
-    'allow_custom_option',  // optional - for radio fields (true/false)
-    'parent_id'             // optional - parent folder ID
-  ];
-    // one empty row as a template
-  const emptyRow = new Array(headers.length).fill('');
-  const csvContent = [headers.join(','), emptyRow.join(',')].join('\n');
+    const fieldKeys = fields
+      .map((field) => {
+        // Prefer extracting from fieldKey (custom_objects.<obj>.<name>)
+        if (field.fieldKey) {
+          const parts = String(field.fieldKey).split('.');
+          return parts[parts.length - 1];
+        }
+        // fallback to normalized name
+        const fallback = String(field.name || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '_');
+        return fallback || field.id;
+      })
+      .filter(Boolean);
 
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="fields_template.csv"');
-  res.send(csvContent);
-});
+    // Include both id and external_id so users can choose update strategy later
+    const headers = ['object_key', 'id', 'external_id', 'owner', 'followers', ...fieldKeys];
+    const emptyRow = [cleanKey, '', '', '', '', ...fieldKeys.map(() => '')];
 
-  
-// Generate fields template with all optional attributes
-// Generate fields template with all optional attributes
-app.get('/api/objects/fields/template', (req, res) => {
-  try {
-    const headers = [
-      'object_key',           // which object this field belongs to
-      'field_key',            // unique field identifier
-      'name',                 // display name
-      'type',                 // text | select | multiselect | file | radio | ...
-      'description',          // optional
-      'placeholder',          // optional
-      'show_in_forms',        // true/false (defaults true)
-      'required',             // true/false
-      'help_text',            // optional
-      'default_value',        // optional
-      'unique',               // true/false
-      'options',              // for select/multiselect (Option1|Option2|Option3)
-      'accepted_formats',     // for file uploads (.pdf|.jpg)
-      'max_file_limit',       // for file uploads (number)
-      'allow_custom_option',  // for radio fields (true/false)
-      'parent_id'             // parent folder ID
-    ];
-
-    // one empty row as a template
-    const emptyRow = new Array(headers.length).fill('');
     const csvContent = [headers.join(','), emptyRow.join(',')].join('\n');
 
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="fields_template.csv"');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${cleanKey}-template.csv"`
+    );
     res.send(csvContent);
   } catch (e) {
-    console.error('Fields template error:', e);
-    res.status(500).json({ error: 'Failed to generate fields template' });
+    console.error(`Failed to generate template for ${objectKey}:`, e?.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to generate records template' });
   }
 });
+
+// -----------------------
+// Backward-compat redirects (keep old links working)
+// -----------------------
+app.get('/api/objects/:objectKey/template', (req, res) => {
+  return res.redirect(302, `/templates/records/${encodeURIComponent(req.params.objectKey)}`);
+});
+app.get('/api/objects/fields/template', (req, res) => {
+  return res.redirect(302, '/templates/fields');
+});
+
 // ===== Server Startup =====
 validateEncryptionSetup();
 
