@@ -522,6 +522,42 @@ async function parseCSV(filePath) {
     throw new Error(`CSV parsing failed: ${error.message}`);
   }
 }
+function normalizeDataType(input) {
+  const t = String(input || 'TEXT').toLowerCase();
+  const map = {
+    text: 'TEXT',
+    textarea: 'LARGE_TEXT', large_text: 'LARGE_TEXT',
+    number: 'NUMERICAL', numerical: 'NUMERICAL',
+    phone: 'PHONE',
+    email: 'EMAIL',
+    date: 'DATE',
+    money: 'MONETORY', monetary: 'MONETORY', currency: 'MONETORY',
+    checkbox: 'CHECKBOX',
+    select: 'SINGLE_OPTIONS', single: 'SINGLE_OPTIONS', single_options: 'SINGLE_OPTIONS',
+    multiselect: 'MULTIPLE_OPTIONS', multiple: 'MULTIPLE_OPTIONS', multiple_options: 'MULTIPLE_OPTIONS',
+    textbox_list: 'TEXTBOX_LIST',
+    file: 'FILE_UPLOAD', file_upload: 'FILE_UPLOAD',
+    radio: 'RADIO'
+  };
+  return map[t] || String(input).toUpperCase();
+}
+
+function parseOptions(raw) {
+  if (!raw) return undefined;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      return arr.map(o => (typeof o === 'string' ? { key: o.toLowerCase().replace(/\s+/g,'_'), label: o } : o));
+    }
+  } catch {}
+  return String(raw).split('|').map(s => s.trim()).filter(Boolean)
+    .map(label => ({ key: label.toLowerCase().replace(/\s+/g,'_'), label }));
+}
+
+function asBool(v, fallback=false) {
+  if (v === undefined || v === null || v === '') return fallback;
+  return String(v).toLowerCase() === 'true';
+}
 
 // ===== Import Route =====
 app.post('/import/:locationId', requireAuth, validateTenant, upload.fields([
@@ -1333,28 +1369,40 @@ app.get('/templates/objects', (req, res) => {
 });
 
 // Fields template: /templates/fields  → fields-template.csv (full header incl. optionals)
+// Fields template: /templates/fields  → fields-template.csv (accurate to /custom-fields)
 app.get('/templates/fields', (req, res) => {
   const headers = [
-    'object_key',           // which object this field belongs to
-    'field_key',            // unique field identifier
-    'name',                 // display name
-    'type',                 // text | select | multiselect | file | radio | ...
+    'object_key',           // e.g., products
+    'field_key',            // e.g., color
+    'name',                 // e.g., Color
+    'data_type',            // TEXT | LARGE_TEXT | NUMERICAL | PHONE | MONETORY | CHECKBOX | SINGLE_OPTIONS | MULTIPLE_OPTIONS | DATE | TEXTBOX_LIST | FILE_UPLOAD | RADIO | EMAIL
     'description',          // optional
     'placeholder',          // optional
-    'show_in_forms',        // true/false (defaults true)
-    'required',             // true/false
-    'help_text',            // optional
-    'default_value',        // optional
-    'unique',               // true/false
-    'options',              // for select/multiselect (Option1|Option2|Option3)
-    'accepted_formats',     // for file uploads (.pdf|.jpg)
-    'max_file_limit',       // for file uploads (number)
-    'allow_custom_option',  // for radio fields (true/false)
-    'parent_id'             // parent folder ID
+    'show_in_forms',        // true/false
+    'options',              // for *_OPTIONS/RADIO/CHECKBOX/TEXTBOX_LIST: "Red|Blue" OR JSON
+    'accepted_formats',     // for FILE_UPLOAD: ".pdf,.jpg,.png"
+    'max_file_limit',       // for FILE_UPLOAD: 1,2,...
+    'allow_custom_option',  // for RADIO: true/false
+    'parent_id'             // optional folder id
   ];
-  const emptyRow = new Array(headers.length).fill('');
-  const csv = [headers.join(','), emptyRow.join(',')].join('\n');
 
+  // single illustrative row (safe defaults)
+  const example = [
+    'products',
+    'color',
+    'Color',
+    'SINGLE_OPTIONS',
+    '',
+    '',
+    'true',
+    'Red|Blue|Green',
+    '',
+    '',
+    '',
+    ''
+  ];
+
+  const csv = [headers.join(','), example.join(',')].join('\n');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="fields-template.csv"');
