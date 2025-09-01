@@ -1129,15 +1129,38 @@ let recordResult;
 let action = 'created';
 
 if (recordId) {
-  // Update existing record
-  recordResult = await axios.patch(
-    `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-    requestBody,
-    { headers }
-  );
-  action = 'updated';
-} else {
-  // Create new record
+  try {
+    // First verify the record exists using the exact endpoint format
+    await axios.get(
+      `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+      { 
+        headers,
+        params: { locationId }
+      }
+    );
+    
+    // Record exists, update it
+    recordResult = await axios.patch(
+      `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+      requestBody,
+      { headers }
+    );
+    action = 'updated';
+  } catch (getError) {
+    if (getError?.response?.status === 404) {
+      console.log(`Record ID ${recordId} not found, creating new record instead`);
+      // Record doesn't exist, create new one
+      recordResult = await axios.post(
+        `${API_BASE}/objects/${fullObjectKey}/records`,
+        requestBody,
+        { headers }
+      );
+      action = 'created (id not found)';
+    } else {
+      throw getError; // Re-throw other errors
+    }
+  }
+} else {  // Create new record
   recordResult = await axios.post(
     `${API_BASE}/objects/${fullObjectKey}/records`,
     requestBody,
