@@ -27,7 +27,10 @@ app.get('/oauth/install', (req, res) => {
     'objects/record.readonly',
     'objects/record.write',
     'locations/customFields.readonly',
-    'locations/customFields.write'
+    'locations/customFields.write',
+    'locations/customValues.readonly',
+    'locations/customValues.write',
+
   ].join(' ');
 
   const url = `https://marketplace.gohighlevel.com/oauth/chooselocation` +
