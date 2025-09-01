@@ -1092,9 +1092,10 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
       try {
         const properties = {};
 
-        for (const [k, v] of Object.entries(row)) {
-          if (['object_key', 'external_id', 'owner', 'followers'].includes(k)) continue;
-          if (v === '' || v === null || v === undefined) continue;
+const recordId = row.id;
+
+for (const [k, v] of Object.entries(row)) {
+  if (['object_key', 'id', 'external_id', 'owner', 'followers'].includes(k)) continue;          if (v === '' || v === null || v === undefined) continue;
           
           // Handle different field types per GHL documentation
           if (k.includes('money') || k.includes('currency')) {
@@ -1124,18 +1125,32 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
           requestBody.followers = row.followers.split(',').map(s => s.trim());
         }
 
-        const createRecord = await axios.post(
-          `${API_BASE}/objects/${fullObjectKey}/records`,
-          requestBody,
-          { headers }
-        );
+let recordResult;
+let action = 'created';
 
-        created.push({ 
-          externalId: row.external_id, 
-          id: createRecord.data?.id || createRecord.data?.data?.id,
-          properties: Object.keys(properties)
-        });
-      } catch (e) {
+if (recordId) {
+  // Update existing record
+  recordResult = await axios.patch(
+    `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+    requestBody,
+    { headers, params: { locationId } }
+  );
+  action = 'updated';
+} else {
+  // Create new record
+  recordResult = await axios.post(
+    `${API_BASE}/objects/${fullObjectKey}/records`,
+    requestBody,
+    { headers }
+  );
+}
+created.push({ 
+  externalId: row.external_id, 
+  id: recordResult.data?.id || recordResult.data?.data?.id || recordId,
+  properties: Object.keys(properties),
+  action: action
+});      
+} catch (e) {
         errors.push({ 
           externalId: row.external_id, 
           error: e?.response?.data || e.message 
