@@ -1139,12 +1139,12 @@ if (recordId) {
       }
     );
     
-    // Record exists, update it
-    recordResult = await axios.patch(
-      `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-      requestBody,
-      { headers }
-    );
+// Record exists, update it
+recordResult = await axios.put(
+  `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+  requestBody,
+  { headers }
+);
     action = 'updated';
   } catch (getError) {
     if (getError?.response?.status === 404) {
@@ -1160,7 +1160,8 @@ if (recordId) {
       throw getError; // Re-throw other errors
     }
   }
-} else {  // Create new record
+} else {  
+  // Create new record
   recordResult = await axios.post(
     `${API_BASE}/objects/${fullObjectKey}/records`,
     requestBody,
