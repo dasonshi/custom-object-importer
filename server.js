@@ -1131,6 +1131,76 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
     });
   }
 });
+// 4) Import Association TYPES (schema-level)
+app.post('/api/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
+  const locationId = req.locationId;
+  if (!req.file) return res.status(400).json({ error: 'Associations CSV file is required' });
+
+  try {
+    const token = await withAccessToken(locationId);
+    const headers = { ...authHeader(token) };
+    const rows = await parseCSV(req.file.path);
+
+    const created = [];
+    const skipped = [];
+    const errors  = [];
+
+    const ensureKey = (k) => {
+      if (!k) return k;
+      // only prefix custom objects (contacts etc. should be left as-is)
+      return /^custom_objects\./.test(k) ? k : (['contact','opportunity','business'].includes(k) ? k : `custom_objects.${k}`);
+    };
+
+    for (const row of rows) {
+      try {
+        const key = String(row.association_key || row.key || '').trim();
+        const firstObjectKey  = ensureKey(String(row.first_object_key || '').trim());
+        const firstObjectLabel = String(row.first_object_label || row.first_label || '').trim();
+        const secondObjectKey = ensureKey(String(row.second_object_key || '').trim());
+        const secondObjectLabel = String(row.second_object_label || row.second_label || '').trim();
+
+        if (!key || !firstObjectKey || !firstObjectLabel || !secondObjectKey || !secondObjectLabel) {
+          throw new Error('Missing required fields (key, first_object_key/label, second_object_key/label)');
+        }
+
+        const payload = {
+          locationId,
+          key,
+          firstObjectLabel,
+          firstObjectKey,
+          secondObjectLabel,
+          secondObjectKey
+        };
+
+        // Create association TYPE
+        const r = await axios.post(`${API_BASE}/associations/`, payload, { headers });
+
+        created.push({
+          id: r.data?.id || r.data?.data?.id,
+          key,
+          firstObjectKey,
+          secondObjectKey
+        });
+      } catch (e) {
+        // If API returns “already exists”/duplicate, treat as skip
+        const msg = e?.response?.data || e.message;
+        if (/(exist|duplicate)/i.test(String(msg))) {
+          skipped.push({ row, reason: 'already exists' });
+        } else {
+          errors.push({ row, error: msg });
+          console.error('Association type create error:', msg);
+        }
+      }
+    }
+
+    await fs.unlink(req.file.path).catch(() => {});
+    res.json({ success: errors.length === 0, created, skipped, errors });
+
+  } catch (e) {
+    console.error('Association types import error:', e?.response?.data || e.message);
+    res.status(400).json({ error: 'Associations type import failed', details: e?.response?.data || e.message });
+  }
+});
 
 // ===== Error Handling =====
 // ===== Error Handling =====
@@ -1347,34 +1417,39 @@ app.get('/api/objects/fields/template', (req, res) => {
 
   
 // Generate fields template with all optional attributes
+// Generate fields template with all optional attributes
 app.get('/api/objects/fields/template', (req, res) => {
-  const headers = [
-    'object_key',           // required - which object this field belongs to
-    'field_key',            // required - unique field identifier  
-    'name',                 // required - display name
-    'type',                 // required - field type (text, select, multiselect, etc.)
-    'description',          // optional - field description
-    'placeholder',          // optional - placeholder text
-    'show_in_forms',        // optional - true/false (defaults to true)
-    'required',             // optional - true/false
-    'help_text',            // optional - help text
-    'default_value',        // optional - default value
-    'unique',               // optional - true/false
-    'options',              // optional - for select/multiselect: pipe-separated (Option1|Option2|Option3)
-    'accepted_formats',     // optional - for file uploads (.pdf, .jpg, etc.)
-    'max_file_limit',       // optional - for file uploads (number)
-    'allow_custom_option',  // optional - for radio fields (true/false)
-    'parent_id'             // optional - parent folder ID
-  ];
+  try {
+    const headers = [
+      'object_key',           // which object this field belongs to
+      'field_key',            // unique field identifier
+      'name',                 // display name
+      'type',                 // text | select | multiselect | file | radio | ...
+      'description',          // optional
+      'placeholder',          // optional
+      'show_in_forms',        // true/false (defaults true)
+      'required',             // true/false
+      'help_text',            // optional
+      'default_value',        // optional
+      'unique',               // true/false
+      'options',              // for select/multiselect (Option1|Option2|Option3)
+      'accepted_formats',     // for file uploads (.pdf|.jpg)
+      'max_file_limit',       // for file uploads (number)
+      'allow_custom_option',  // for radio fields (true/false)
+      'parent_id'             // parent folder ID
+    ];
 
-  const csvContent = [
-    headers.join(','),
-    exampleRow.join(',')
-  ].join('\n');
-  
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="fields_template.csv"');
-  res.send(csvContent);
+    // one empty row as a template
+    const emptyRow = new Array(headers.length).fill('');
+    const csvContent = [headers.join(','), emptyRow.join(',')].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="fields_template.csv"');
+    res.send(csvContent);
+  } catch (e) {
+    console.error('Fields template error:', e);
+    res.status(500).json({ error: 'Failed to generate fields template' });
+  }
 });
 // ===== Server Startup =====
 validateEncryptionSetup();
