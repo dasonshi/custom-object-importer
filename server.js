@@ -179,10 +179,6 @@ function validateEncryptionSetup() {
 
 // Store tokens safely (use database in production)
 const installs = new InstallsDB(ENC_KEY);
-// TEMP: per-agency branding registry (replace with real DB table)
-const brandingByCompany = new Map();
-// shape: brandingByCompany.set(companyId, { name, logo, domain, color })
-
 function authHeader(token) {
   return {
     Authorization: `Bearer ${token}`,
@@ -191,49 +187,7 @@ function authHeader(token) {
     Version: '2021-07-28'
   };
 }
-// ---- Branding resolver (agency whitelabel via companyId) ----
-async function resolveBranding(companyId, locationId) {
-  // 0) in-memory overrides win
-  if (brandingByCompany.has(companyId)) {
-    const b = brandingByCompany.get(companyId);
-    return {
-      companyName: b.name || null,
-      companyLogo: b.logo || null,
-      companyDomain: b.domain || null,
-      primaryColor: b.color || null,
-    };
-  }
 
-  // 1) try marketplace/company using ANY valid location token
-  try {
-    if (locationId && await installs.has(locationId)) {
-      const token = await withAccessToken(locationId);
-      const r = await axios.get(
-        `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
-        { headers: authHeader(token) }
-      );
-      const company = r.data?.company || r.data || {};
-      return {
-        companyName: company.name || null,
-        companyLogo: company.logoUrl || null,
-        companyDomain: company.whitelabelDomain || company.appDomain || company.domain || null,
-        primaryColor: company.brandColor || company.primaryColor || null
-      };
-    } else {
-      console.warn('resolveBranding: no install/token for locationId', locationId);
-    }
-  } catch (e) {
-    console.warn('resolveBranding: marketplace fetch failed:', e?.response?.status, e?.response?.data || e.message);
-  }
-
-  // 2) env defaults as last resort
-  return {
-    companyName: process.env.BRAND_NAME || 'Your Agency',
-    companyLogo: process.env.WHITELABEL_LOGO_URL || null,
-    companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
-    primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
-  };
-}
 
 function createSecureState() {
   const payload = {
@@ -1841,23 +1795,8 @@ app.post('/api/decrypt-user-data', express.json(), async (req, res) => {
     res.status(400).json({ error: 'Failed to decrypt user data' });
   }
 });
-// Agency branding (for whitelabel appearance)
-// Agency branding (agency/company only; ignore location)
-app.get('/api/agency-branding', requireAuth, async (req, res) => {
-  try {
-    // We don't have companyId in this route; pass null.
-    const branding = await resolveBranding(null, req.locationId);
-    res.json(branding);
-  } catch (e) {
-    console.error('Agency branding fetch failed:', e?.response?.data || e.message);
-    res.json({
-      companyName: process.env.BRAND_NAME || 'Your Agency',
-      companyLogo: process.env.WHITELABEL_LOGO_URL || null,
-      companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
-      primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
-    });
-  }
-});
+
+
 // Combined endpoint for efficiency (optional)
 app.post('/api/app-context', express.json(), async (req, res) => {
   try {
@@ -1942,44 +1881,14 @@ app.post('/api/app-context', express.json(), async (req, res) => {
       }
     }
 
-    // 5) Branding (agency-level via companyId, using location token if available)
-    const branding = await resolveBranding(user.companyId, user.activeLocation);
+res.json({ user, location });
 
-    res.json({ user, location, branding });
   } catch (error) {
     console.error('Failed to get app context:', error.message);
     res.status(400).json({ error: 'app_context_failed', message: error.message });
   }
 });
 
-
-// Save per-agency branding (requires decrypted user payload from frontend)
-app.post('/api/branding/save', express.json(), async (req, res) => {
-  try {
-    const { encryptedData, name, logo, domain, color } = req.body;
-    if (!encryptedData) return res.status(400).json({ error: 'Encrypted data required' });
-
-    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
-      .toString(CryptoJS.enc.Utf8);
-    const user = JSON.parse(decrypted);
-
-    if (user.type !== 'agency') {
-      return res.status(403).json({ error: 'agency_only', message: 'Only agency context can save branding' });
-    }
-
-    brandingByCompany.set(user.companyId, {
-      name: (name || '').trim() || undefined,
-      logo: (logo || '').trim() || undefined,
-      domain: (domain || '').trim() || undefined,
-      color: (color || '').trim() || undefined
-    });
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('branding save error:', e.message);
-    res.status(400).json({ error: 'Failed to save branding' });
-  }
-});
 app.get('/dev/mock-encrypted', (req, res) => {
   if (process.env.NODE_ENV === 'production') return res.status(404).end();
 
