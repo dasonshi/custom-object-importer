@@ -10,6 +10,8 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { InstallsDB } from './database.js';
+import CryptoJS from 'crypto-js';
+
 
 
 const app = express();
@@ -1753,18 +1755,23 @@ app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
 app.post('/api/decrypt-user-data', express.json(), async (req, res) => {
   try {
     const { encryptedData } = req.body;
-    const CryptoJS = require('crypto-js');
+    
+    if (!encryptedData) {
+      return res.status(400).json({ error: 'Encrypted data required' });
+    }
+
+    // Use CryptoJS directly (no const declaration needed)
     const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
       .toString(CryptoJS.enc.Utf8);
     
     const userData = JSON.parse(decrypted);
+    
     res.json(userData);
   } catch (error) {
     console.error('Failed to decrypt user data:', error);
     res.status(400).json({ error: 'Failed to decrypt user data' });
   }
 });
-
 // Agency branding (for whitelabel appearance)
 app.get('/api/agency-branding', requireAuth, async (req, res) => {
   const locationId = req.locationId;
