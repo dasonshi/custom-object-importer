@@ -191,6 +191,50 @@ function authHeader(token) {
     Version: '2021-07-28'
   };
 }
+// ---- Branding resolver (agency whitelabel via companyId) ----
+async function resolveBranding(companyId, locationId) {
+  // 0) in-memory overrides win
+  if (brandingByCompany.has(companyId)) {
+    const b = brandingByCompany.get(companyId);
+    return {
+      companyName: b.name || null,
+      companyLogo: b.logo || null,
+      companyDomain: b.domain || null,
+      primaryColor: b.color || null,
+    };
+  }
+
+  // 1) try marketplace/company using ANY valid location token
+  try {
+    if (locationId && await installs.has(locationId)) {
+      const token = await withAccessToken(locationId);
+      const r = await axios.get(
+        `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+        { headers: authHeader(token) }
+      );
+      const company = r.data?.company || r.data || {};
+      return {
+        companyName: company.name || null,
+        companyLogo: company.logoUrl || null,
+        companyDomain: company.whitelabelDomain || company.appDomain || company.domain || null,
+        primaryColor: company.brandColor || company.primaryColor || null
+      };
+    } else {
+      console.warn('resolveBranding: no install/token for locationId', locationId);
+    }
+  } catch (e) {
+    console.warn('resolveBranding: marketplace fetch failed:', e?.response?.status, e?.response?.data || e.message);
+  }
+
+  // 2) env defaults as last resort
+  return {
+    companyName: process.env.BRAND_NAME || 'Your Agency',
+    companyLogo: process.env.WHITELABEL_LOGO_URL || null,
+    companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
+    primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
+  };
+}
+
 function createSecureState() {
   const payload = {
     timestamp: Date.now(),
@@ -1821,6 +1865,7 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
 app.post('/api/app-context', express.json(), async (req, res) => {
   try {
     const { encryptedData } = req.body;
+console.log("AppContext user:", user);
 
     // 1) Validate payload
     if (typeof encryptedData !== 'string' || encryptedData.trim().length === 0) {
