@@ -30,6 +30,7 @@ app.get('/oauth/install', (req, res) => {
     'locations/customFields.write',
     'locations/customValues.readonly',
     'locations/customValues.write',
+    'locations.readonly',
 
   ].join(' ');
 
@@ -1748,41 +1749,100 @@ app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
   }
 });
 
-// Automatic agency branding (no user configuration needed)
+// User context decryption (for personalization)
+app.post('/api/decrypt-user-data', express.json(), async (req, res) => {
+  try {
+    const { encryptedData } = req.body;
+    const CryptoJS = require('crypto-js');
+    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
+      .toString(CryptoJS.enc.Utf8);
+    
+    const userData = JSON.parse(decrypted);
+    res.json(userData);
+  } catch (error) {
+    console.error('Failed to decrypt user data:', error);
+    res.status(400).json({ error: 'Failed to decrypt user data' });
+  }
+});
+
+// Agency branding (for whitelabel appearance)
 app.get('/api/agency-branding', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   
   try {
     const token = await withAccessToken(locationId);
     
-    // Get company details from HighLevel installation
-    const installDetails = await axios.get(
-      `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+    const locationDetails = await axios.get(
+      `${API_BASE}/locations/${locationId}`,
       { headers: authHeader(token) }
     );
     
-    const company = installDetails.data.company || installDetails.data;
+    const location = locationDetails.data;
     
-    // Return agency info for whitelabeling
     res.json({
-      companyName: company.name || 'Agency',
-      companyLogo: company.logoUrl || null,
-      companyDomain: company.domain || null,
+      companyName: location.companyName || location.name || 'Your Agency',
+      companyLogo: location.logoUrl || null,
+      companyDomain: location.website || null,
+      primaryColor: '#6366f1',
       locationId: locationId
     });
     
   } catch (e) {
-    console.error('Failed to fetch agency info:', e?.response?.data || e.message);
-    // Fallback to basic info
+    console.error('Failed to fetch location details:', e?.response?.data || e.message);
     res.json({
-      companyName: 'Agency',
+      companyName: 'Your Agency',
       companyLogo: null,
       companyDomain: null,
+      primaryColor: '#6366f1',
       locationId: req.locationId
     });
   }
 });
-
+// Combined endpoint for efficiency (optional)
+app.post('/api/app-context', express.json(), async (req, res) => {
+  try {
+    const { encryptedData, locationId } = req.body;
+    
+    // 1. Decrypt user context
+    const CryptoJS = require('crypto-js');
+    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
+      .toString(CryptoJS.enc.Utf8);
+    const userData = JSON.parse(decrypted);
+    
+    // 2. Get branding (if we have locationId)
+    let branding = { companyName: 'Agency', companyLogo: null };
+    if (locationId) {
+      try {
+        const hasInstall = await installs.has(locationId);
+        if (hasInstall) {
+          const token = await withAccessToken(locationId);
+          const installDetails = await axios.get(
+            `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+            { headers: authHeader(token) }
+          );
+          const company = installDetails.data.company || installDetails.data;
+          branding = {
+            companyName: company.name || 'Agency',
+            companyLogo: company.logoUrl || null,
+            primaryColor: company.primaryColor || '#6366f1'
+          };
+        }
+      } catch (e) {
+        console.error('Failed to fetch branding in combined call:', e.message);
+      }
+    }
+    
+    // 3. Return both user context + branding
+    res.json({
+      user: userData,
+      branding: branding
+    });
+    
+  } catch (error) {
+    console.error('Failed to get app context:', error);
+    res.status(400).json({ error: 'Failed to get app context' });
+  }
+});
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
