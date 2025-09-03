@@ -14,6 +14,7 @@ import CryptoJS from 'crypto-js';
 
 
 
+
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
 app.set('trust proxy', 1); // trust CF + Render chain
@@ -1933,7 +1934,55 @@ app.post('/api/branding/save', express.json(), async (req, res) => {
     res.status(400).json({ error: 'Failed to save branding' });
   }
 });
+app.get('/dev/mock-encrypted', (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(404).end();
 
+  // pick a real locationId you’ve already installed the app on
+  const { companyId = 'AGENCY_123', locationId = process.env.DEV_LOCATION_ID } = req.query;
+
+  const payload = {
+    userId: 'DEVUSER',
+    companyId,
+    role: 'admin',
+    type: locationId ? 'location' : 'agency',
+    ...(locationId ? { activeLocation: locationId } : {}),
+    userName: 'Dev User',
+    email: 'dev@example.com'
+  };
+
+  const ciphertext = CryptoJS.AES.encrypt(
+    JSON.stringify(payload),
+    process.env.GHL_APP_SHARED_SECRET
+  ).toString();
+
+  res.json({ encryptedData: ciphertext });
+});
+// --- DEV ONLY: manually set the location cookie if we have an install ---
+app.post('/dev/set-location/:locationId', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(404).end();
+
+  const { locationId } = req.params;
+  if (!locationId || !(await installs.has(locationId))) {
+    return res.status(400).json({ error: 'unknown_location_or_not_installed' });
+  }
+
+  // normal signed cookie
+  res.cookie('ghl_location', locationId, {
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+    signed: true,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+  // CHIPS/partitioned duplicate for cross-site iframes
+  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+  res.append('Set-Cookie',
+    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+  );
+
+  res.json({ ok: true, locationId });
+});
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
