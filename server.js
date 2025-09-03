@@ -885,6 +885,27 @@ app.get('/api/debug/cookies', (req, res) => {
     valuePreview: (req.signedCookies?.ghl_location || req.cookies?.ghl_location || '').slice(0, 8),
   });
 });
+app.get('/api/debug/install/:locationId', async (req, res) => {
+  const { locationId } = req.params;
+  const has = await installs.has(locationId);
+  let tokenOk = false, companyOk = false, locationOk = false, logs = [];
+
+  if (has) {
+    try {
+      const token = await withAccessToken(locationId);
+      tokenOk = Boolean(token);
+      const r1 = await axios.get(`${API_BASE}/locations/${locationId}`, { headers: authHeader(token) });
+      locationOk = !!r1.data?.id || !!r1.data?.name;
+      const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, { headers: authHeader(token) });
+      companyOk = Boolean(r2.data?.company?.name || r2.data?.name);
+    } catch (e) {
+      logs.push(e?.response?.data || e.message);
+    }
+  }
+
+  res.json({ hasInstall: has, tokenOk, locationOk, companyOk, logs });
+});
+
 // ===== Separate Import Routes =====
 
 // 1. Import Objects/Schemas Only
@@ -1824,38 +1845,14 @@ app.post('/api/decrypt-user-data', express.json(), async (req, res) => {
 // Agency branding (agency/company only; ignore location)
 app.get('/api/agency-branding', requireAuth, async (req, res) => {
   try {
-    const token = await withAccessToken(req.locationId);
-    const headers = authHeader(token);
-
-    // Marketplace installations returns the agency "company" block
-    const r = await axios.get(
-      `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
-      { headers }
-    );
-
-    const company = r.data?.company || r.data || {};
-
-    // Prefer explicit env overrides, then company values
-    const companyDomain =
-      process.env.WHITELABEL_DOMAIN ||
-      process.env.APP_DOMAIN ||
-      company.whitelabelDomain ||
-      company.appDomain ||
-      company.domain ||
-      null;
-
-    res.json({
-      companyName: company.name || 'Your Agency',
-      companyLogo: company.logoUrl || null,
-      companyDomain,
-      primaryColor: company.primaryColor || process.env.BRAND_PRIMARY_COLOR || '#6366f1',
-      // no location fallback — agency-only by design
-    });
+    // We don't have companyId in this route; pass null.
+    const branding = await resolveBranding(null, req.locationId);
+    res.json(branding);
   } catch (e) {
-    console.error('Agency branding (company) fetch failed:', e?.response?.data || e.message);
+    console.error('Agency branding fetch failed:', e?.response?.data || e.message);
     res.json({
-      companyName: 'Your Agency',
-      companyLogo: null,
+      companyName: process.env.BRAND_NAME || 'Your Agency',
+      companyLogo: process.env.WHITELABEL_LOGO_URL || null,
       companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
       primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
     });
@@ -1865,7 +1862,6 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
 app.post('/api/app-context', express.json(), async (req, res) => {
   try {
     const { encryptedData } = req.body;
-console.log("AppContext user:", user);
 
     // 1) Validate payload
     if (typeof encryptedData !== 'string' || encryptedData.trim().length === 0) {
@@ -1878,8 +1874,10 @@ console.log("AppContext user:", user);
     // 2) Decrypt user
     let user;
     try {
-      const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
-        .toString(CryptoJS.enc.Utf8);
+      const decrypted = CryptoJS.AES.decrypt(
+        encryptedData,
+        process.env.GHL_APP_SHARED_SECRET
+      ).toString(CryptoJS.enc.Utf8);
       user = JSON.parse(decrypted);
     } catch (e) {
       console.error('User decrypt failed:', e.message);
@@ -1888,6 +1886,14 @@ console.log("AppContext user:", user);
         message: 'Unable to decrypt user payload (check Shared Secret and ciphertext source)'
       });
     }
+
+    // Optional: log AFTER user exists
+    console.log('AppContext user:', {
+      companyId: user.companyId,
+      activeLocation: user.activeLocation,
+      type: user.type,
+      email: user.email
+    });
 
     // 3) Enforce cookie vs activeLocation
     const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
@@ -1899,7 +1905,7 @@ console.log("AppContext user:", user);
     }
 
     // If no cookie but we have an install for activeLocation, set it
-    if (user.activeLocation && !cookieLocation && installs.has(user.activeLocation)) {
+    if (user.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
       res.cookie('ghl_location', user.activeLocation, {
         domain: process.env.COOKIE_DOMAIN || undefined,
         httpOnly: true,
@@ -1917,7 +1923,7 @@ console.log("AppContext user:", user);
 
     // 4) Location details (UI friendly)
     let location = null;
-    if (user.activeLocation && installs.has(user.activeLocation)) {
+    if (user.activeLocation && await installs.has(user.activeLocation)) {
       try {
         const token = await withAccessToken(user.activeLocation);
         const r = await axios.get(`${API_BASE}/locations/${user.activeLocation}`, {
@@ -1936,41 +1942,8 @@ console.log("AppContext user:", user);
       }
     }
 
-    // 5) Branding: overrides > marketplace company > env defaults
-    let branding = null;
-
-    // check in-memory overrides first
-    if (brandingByCompany.has(user.companyId)) {
-      branding = brandingByCompany.get(user.companyId);
-    } else {
-      // try marketplace installs (requires any valid location token)
-      try {
-        const token = user.activeLocation ? await withAccessToken(user.activeLocation) : null;
-        if (token) {
-          const r = await axios.get(
-            `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
-            { headers: authHeader(token) }
-          );
-          const company = r.data?.company || r.data || {};
-          branding = {
-            companyName: company.name || null,
-            companyLogo: company.logoUrl || null,
-            companyDomain: company.whitelabelDomain || company.appDomain || company.domain || null,
-            primaryColor: company.brandColor || null
-          };
-        }
-      } catch (e) {
-        console.warn('Branding fetch failed:', e?.response?.status, e?.response?.data || e.message);
-      }
-    }
-
-    // env fallback
-    branding = {
-      companyName: branding?.companyName || process.env.BRAND_NAME || 'Your Agency',
-      companyLogo: branding?.companyLogo || process.env.WHITELABEL_LOGO_URL || null,
-      companyDomain: branding?.companyDomain || process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
-      primaryColor: branding?.primaryColor || process.env.BRAND_PRIMARY_COLOR || '#6366f1'
-    };
+    // 5) Branding (agency-level via companyId, using location token if available)
+    const branding = await resolveBranding(user.companyId, user.activeLocation);
 
     res.json({ user, location, branding });
   } catch (error) {
