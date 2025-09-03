@@ -1773,39 +1773,46 @@ app.post('/api/decrypt-user-data', express.json(), async (req, res) => {
   }
 });
 // Agency branding (for whitelabel appearance)
+// Agency branding (agency/company only; ignore location)
 app.get('/api/agency-branding', requireAuth, async (req, res) => {
-  const locationId = req.locationId;
-  
   try {
-    const token = await withAccessToken(locationId);
-    
-    const locationDetails = await axios.get(
-      `${API_BASE}/locations/${locationId}`,
-      { headers: authHeader(token) }
+    const token = await withAccessToken(req.locationId);
+    const headers = authHeader(token);
+
+    // Marketplace installations returns the agency "company" block
+    const r = await axios.get(
+      `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+      { headers }
     );
-    
-    const location = locationDetails.data;
-    
+
+    const company = r.data?.company || r.data || {};
+
+    // Prefer explicit env overrides, then company values
+    const companyDomain =
+      process.env.WHITELABEL_DOMAIN ||
+      process.env.APP_DOMAIN ||
+      company.whitelabelDomain ||
+      company.appDomain ||
+      company.domain ||
+      null;
+
     res.json({
-      companyName: location.companyName || location.name || 'Your Agency',
-      companyLogo: location.logoUrl || null,
-      companyDomain: location.website || null,
-      primaryColor: '#6366f1',
-      locationId: locationId
+      companyName: company.name || 'Your Agency',
+      companyLogo: company.logoUrl || null,
+      companyDomain,
+      primaryColor: company.primaryColor || process.env.BRAND_PRIMARY_COLOR || '#6366f1',
+      // no location fallback — agency-only by design
     });
-    
   } catch (e) {
-    console.error('Failed to fetch location details:', e?.response?.data || e.message);
+    console.error('Agency branding (company) fetch failed:', e?.response?.data || e.message);
     res.json({
       companyName: 'Your Agency',
       companyLogo: null,
-      companyDomain: null,
-      primaryColor: '#6366f1',
-      locationId: req.locationId
+      companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
+      primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
     });
   }
 });
-// Combined endpoint for efficiency (optional)
 // Combined endpoint for efficiency (optional)
 app.post('/api/app-context', express.json(), async (req, res) => {
   try {
