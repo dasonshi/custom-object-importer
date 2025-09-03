@@ -286,6 +286,17 @@ function validateTenant(req, res, next) {
   
   next();
 }
+// Add this RIGHT AFTER the validateTenant function
+function handleLocationOverride(req, res, next) {
+  const requestedLocationId = req.query.locationId || req.params.locationId;
+  
+  if (requestedLocationId && requestedLocationId !== req.locationId) {
+    console.log(`Location override: ${req.locationId} -> ${requestedLocationId}`);
+    req.locationId = requestedLocationId;
+  }
+  
+  next();
+}
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {
@@ -1418,7 +1429,7 @@ app.get('/launch', (req, res) => {
 
 // ===== Debug Route: List custom object schemas =====
 // ===== Debug Route: List objects =====
-app.get('/api/objects', requireAuth, async (req, res) => {
+app.get('/api/objects', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId; // Use authenticated location
   try {
     const token = await withAccessToken(locationId);
@@ -1448,7 +1459,7 @@ app.get('/api/objects', requireAuth, async (req, res) => {
   }
 });
 // Get custom fields for a specific object key
-app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
+app.get('/api/objects/:objectKey/fields', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId;
   let { objectKey } = req.params;
   
@@ -1508,7 +1519,12 @@ app.get('/api/objects/:objectKey/fields', requireAuth, async (req, res) => {
   }
 });
 // Get custom values for location
-app.get('/api/custom-values', requireAuth, async (req, res) => {
+app.get('/api/custom-values', requireAuth, handleLocationOverride, async (req, res) => {
+  console.log('=== CUSTOM VALUES REQUEST ===');
+  console.log('Query locationId:', req.query.locationId);
+  console.log('Final locationId being used:', req.locationId);
+  console.log('==============================');
+
   const locationId = req.locationId;
   
   try {
