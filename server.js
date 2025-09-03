@@ -1822,7 +1822,7 @@ app.post('/api/app-context', express.json(), async (req, res) => {
   try {
     const { encryptedData } = req.body;
 
-    // 1) Validate payload BEFORE decrypting
+    // 1) Validate payload
     if (typeof encryptedData !== 'string' || encryptedData.trim().length === 0) {
       return res.status(422).json({
         error: 'invalid_payload',
@@ -1830,7 +1830,7 @@ app.post('/api/app-context', express.json(), async (req, res) => {
       });
     }
 
-    // 2) Decrypt user (Shared Secret)
+    // 2) Decrypt user
     let user;
     try {
       const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
@@ -1854,7 +1854,7 @@ app.post('/api/app-context', express.json(), async (req, res) => {
     }
 
     // If no cookie but we have an install for activeLocation, set it
-    if (user.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
+    if (user.activeLocation && !cookieLocation && installs.has(user.activeLocation)) {
       res.cookie('ghl_location', user.activeLocation, {
         domain: process.env.COOKIE_DOMAIN || undefined,
         httpOnly: true,
@@ -1870,15 +1870,14 @@ app.post('/api/app-context', express.json(), async (req, res) => {
       );
     }
 
-    // 4) Location details (so UI can display location NAME)
+    // 4) Location details (UI friendly)
     let location = null;
-    if (user.activeLocation && await installs.has(user.activeLocation)) {
+    if (user.activeLocation && installs.has(user.activeLocation)) {
       try {
         const token = await withAccessToken(user.activeLocation);
-        const r = await axios.get(
-          `${API_BASE}/locations/${user.activeLocation}`,
-          { headers: authHeader(token) }
-        );
+        const r = await axios.get(`${API_BASE}/locations/${user.activeLocation}`, {
+          headers: authHeader(token)
+        });
         const loc = r.data || {};
         location = {
           id: user.activeLocation,
@@ -1892,12 +1891,40 @@ app.post('/api/app-context', express.json(), async (req, res) => {
       }
     }
 
-    // 5) Branding (ENV fallback; or your DB lookup keyed by user.companyId)
-    const branding = {
-      companyName: process.env.BRAND_NAME || 'Your Agency',
-      companyLogo: process.env.WHITELABEL_LOGO_URL || null,
-      companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
-      primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
+    // 5) Branding: overrides > marketplace company > env defaults
+    let branding = null;
+
+    // check in-memory overrides first
+    if (brandingByCompany.has(user.companyId)) {
+      branding = brandingByCompany.get(user.companyId);
+    } else {
+      // try marketplace installs (requires any valid location token)
+      try {
+        const token = user.activeLocation ? await withAccessToken(user.activeLocation) : null;
+        if (token) {
+          const r = await axios.get(
+            `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+            { headers: authHeader(token) }
+          );
+          const company = r.data?.company || r.data || {};
+          branding = {
+            companyName: company.name || null,
+            companyLogo: company.logoUrl || null,
+            companyDomain: company.whitelabelDomain || company.appDomain || company.domain || null,
+            primaryColor: company.brandColor || null
+          };
+        }
+      } catch (e) {
+        console.warn('Branding fetch failed:', e?.response?.status, e?.response?.data || e.message);
+      }
+    }
+
+    // env fallback
+    branding = {
+      companyName: branding?.companyName || process.env.BRAND_NAME || 'Your Agency',
+      companyLogo: branding?.companyLogo || process.env.WHITELABEL_LOGO_URL || null,
+      companyDomain: branding?.companyDomain || process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
+      primaryColor: branding?.primaryColor || process.env.BRAND_PRIMARY_COLOR || '#6366f1'
     };
 
     res.json({ user, location, branding });
@@ -1906,6 +1933,7 @@ app.post('/api/app-context', express.json(), async (req, res) => {
     res.status(400).json({ error: 'app_context_failed', message: error.message });
   }
 });
+
 
 // Save per-agency branding (requires decrypted user payload from frontend)
 app.post('/api/branding/save', express.json(), async (req, res) => {
