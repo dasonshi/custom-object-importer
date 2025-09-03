@@ -178,6 +178,9 @@ function validateEncryptionSetup() {
 
 // Store tokens safely (use database in production)
 const installs = new InstallsDB(ENC_KEY);
+// TEMP: per-agency branding registry (replace with real DB table)
+const brandingByCompany = new Map();
+// shape: brandingByCompany.set(companyId, { name, logo, domain, color })
 
 function authHeader(token) {
   return {
@@ -1816,47 +1819,122 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
 // Combined endpoint for efficiency (optional)
 app.post('/api/app-context', express.json(), async (req, res) => {
   try {
-    const { encryptedData, locationId } = req.body;
-    
-    // 1. Decrypt user context
-    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
-      .toString(CryptoJS.enc.Utf8);
-    const userData = JSON.parse(decrypted);
-    
-    // 2. Get branding (if we have locationId)
-    let branding = { companyName: 'Agency', companyLogo: null };
-    if (locationId) {
+    const { encryptedData } = req.body;
+
+    // 1) Validate payload BEFORE decrypting
+    if (typeof encryptedData !== 'string' || encryptedData.trim().length === 0) {
+      return res.status(422).json({
+        error: 'invalid_payload',
+        message: 'Encrypted user data is required and must be a non-empty string'
+      });
+    }
+
+    // 2) Decrypt user (Shared Secret)
+    let user;
+    try {
+      const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
+        .toString(CryptoJS.enc.Utf8);
+      user = JSON.parse(decrypted);
+    } catch (e) {
+      console.error('User decrypt failed:', e.message);
+      return res.status(422).json({
+        error: 'decrypt_failed',
+        message: 'Unable to decrypt user payload (check Shared Secret and ciphertext source)'
+      });
+    }
+
+    // 3) Enforce cookie vs activeLocation
+    const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
+    if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
+      return res.status(409).json({
+        error: 'location_mismatch',
+        message: `Cookie location ${cookieLocation} != activeLocation ${user.activeLocation}`
+      });
+    }
+
+    // If no cookie but we have an install for activeLocation, set it
+    if (user.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
+      res.cookie('ghl_location', user.activeLocation, {
+        domain: process.env.COOKIE_DOMAIN || undefined,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'none',
+        signed: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000
+      });
+      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+      res.append(
+        'Set-Cookie',
+        `ghl_location=${encodeURIComponent(user.activeLocation)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+      );
+    }
+
+    // 4) Location details (so UI can display location NAME)
+    let location = null;
+    if (user.activeLocation && await installs.has(user.activeLocation)) {
       try {
-        const hasInstall = await installs.has(locationId);
-        if (hasInstall) {
-          const token = await withAccessToken(locationId);
-          const installDetails = await axios.get(
-            `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
-            { headers: authHeader(token) }
-          );
-          const company = installDetails.data.company || installDetails.data;
-          branding = {
-            companyName: company.name || 'Agency',
-            companyLogo: company.logoUrl || null,
-            primaryColor: company.primaryColor || '#6366f1'
-          };
-        }
+        const token = await withAccessToken(user.activeLocation);
+        const r = await axios.get(
+          `${API_BASE}/locations/${user.activeLocation}`,
+          { headers: authHeader(token) }
+        );
+        const loc = r.data || {};
+        location = {
+          id: user.activeLocation,
+          name: loc.name || null,
+          companyName: loc.companyName || null,
+          logoUrl: loc.logoUrl || null,
+          website: loc.website || null
+        };
       } catch (e) {
-        console.error('Failed to fetch branding in combined call:', e.message);
+        console.warn('Location fetch failed:', e?.response?.status, e?.response?.data || e.message);
       }
     }
-    
-    // 3. Return both user context + branding
-    res.json({
-      user: userData,
-      branding: branding
-    });
-    
+
+    // 5) Branding (ENV fallback; or your DB lookup keyed by user.companyId)
+    const branding = {
+      companyName: process.env.BRAND_NAME || 'Your Agency',
+      companyLogo: process.env.WHITELABEL_LOGO_URL || null,
+      companyDomain: process.env.WHITELABEL_DOMAIN || process.env.APP_DOMAIN || null,
+      primaryColor: process.env.BRAND_PRIMARY_COLOR || '#6366f1'
+    };
+
+    res.json({ user, location, branding });
   } catch (error) {
-    console.error('Failed to get app context:', error);
-    res.status(400).json({ error: 'Failed to get app context' });
+    console.error('Failed to get app context:', error.message);
+    res.status(400).json({ error: 'app_context_failed', message: error.message });
   }
 });
+
+// Save per-agency branding (requires decrypted user payload from frontend)
+app.post('/api/branding/save', express.json(), async (req, res) => {
+  try {
+    const { encryptedData, name, logo, domain, color } = req.body;
+    if (!encryptedData) return res.status(400).json({ error: 'Encrypted data required' });
+
+    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
+      .toString(CryptoJS.enc.Utf8);
+    const user = JSON.parse(decrypted);
+
+    if (user.type !== 'agency') {
+      return res.status(403).json({ error: 'agency_only', message: 'Only agency context can save branding' });
+    }
+
+    brandingByCompany.set(user.companyId, {
+      name: (name || '').trim() || undefined,
+      logo: (logo || '').trim() || undefined,
+      domain: (domain || '').trim() || undefined,
+      color: (color || '').trim() || undefined
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('branding save error:', e.message);
+    res.status(400).json({ error: 'Failed to save branding' });
+  }
+});
+
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
