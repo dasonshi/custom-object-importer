@@ -244,7 +244,32 @@ function verifySecureState(state) {
 // Authentication middleware functions
 // Authentication middleware functions
 async function requireAuth(req, res, next) {
-const locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location;
+  let locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
+
+  // Allow explicit override (query or header)
+  const override = (req.query.locationId || req.get('x-location-id') || '').trim();
+  if (override && override !== locationId) {
+    if (await installs.has(override)) {
+      // Set signed cookie
+      res.cookie('ghl_location', override, {
+        domain: process.env.COOKIE_DOMAIN || undefined,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'none',
+        signed: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000
+      });
+      // Partitioned duplicate for cross-site iframes
+      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+      res.append(
+        'Set-Cookie',
+        `ghl_location=${encodeURIComponent(override)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+      );
+      locationId = override;
+    } else {
+      return res.status(403).json({ error: 'invalid_location', message: 'Unknown or uninstalled locationId override' });
+    }
+  }
 
   if (!locationId) {
     return res.status(401).json({
@@ -253,10 +278,9 @@ const locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location;
     });
   }
 
-  // Verify this location still has valid tokens
-  const hasInstall = await installs.has(locationId);
-  if (!hasInstall) {
-    // Clear invalid cookies (signed + partitioned)
+const hasInstall = await installs.has(locationId);
+  if (!hasInstall) 
+    {
     res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
     {
       const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
@@ -265,15 +289,13 @@ const locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location;
         `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
       );
     }
-    return res.status(401).json({
-      error: 'Installation not found',
-      message: 'Please re-authenticate'
-    });
+    return res.status(401).json({ error: 'Installation not found', message: 'Please re-authenticate' });
   }
 
   req.locationId = locationId;
   next();
 }
+
 function validateTenant(req, res, next) {
   const paramLocation = req.params.locationId || req.query.locationId;
   
