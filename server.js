@@ -319,6 +319,7 @@ function handleLocationOverride(req, res, next) {
   
   next();
 }
+
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {
@@ -2066,6 +2067,34 @@ app.post('/api/switch-location', express.json(), async (req, res) => {
     res.status(500).json({ error: 'Location switch failed' });
   }
 });
+
+// Get a single object's schema; optionally include all fields via fetchProperties=true
+app.get('/api/objects/:objectKey/schema', requireAuth, async (req, res) => {
+  try {
+    const locationId = req.locationId;
+    const token = await withAccessToken(locationId);
+    const { objectKey } = req.params;
+
+    const cleanKey = String(objectKey).replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+
+    const params = { locationId };
+    if (String(req.query.fetchProperties).toLowerCase() === 'true') {
+      params.fetchProperties = 'true'; // <- the GHL docs option you found
+    }
+
+    const r = await axios.get(`${API_BASE}/objects/${apiObjectKey}`, {
+      headers: authHeader(token),
+      params
+    });
+
+    res.json(r.data); // shape includes schema, and (with fetchProperties=true) its fields/properties
+  } catch (e) {
+    console.error('schema fetch failed:', e?.response?.status, e?.response?.data || e.message);
+    res.status(e?.response?.status || 500).json(e?.response?.data || { error: 'schema_fetch_failed' });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
