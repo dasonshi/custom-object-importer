@@ -1806,12 +1806,12 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
   }
 });
 // Combined endpoint for efficiency (optional)
+// Combined endpoint for efficiency (optional)
 app.post('/api/app-context', express.json(), async (req, res) => {
   try {
     const { encryptedData, locationId } = req.body;
     
     // 1. Decrypt user context
-    const CryptoJS = require('crypto-js');
     const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
       .toString(CryptoJS.enc.Utf8);
     const userData = JSON.parse(decrypted);
