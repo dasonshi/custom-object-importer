@@ -1836,12 +1836,36 @@ app.post('/api/app-context', express.json(), async (req, res) => {
 
     // 3) Enforce cookie vs activeLocation
     const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
-    if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
-      return res.status(409).json({
-        error: 'location_mismatch',
-        message: `Cookie location ${cookieLocation} != activeLocation ${user.activeLocation}`
-      });
-    }
+if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
+  // Check if we have an installation for the new location
+  if (await installs.has(user.activeLocation)) {
+    // Update cookie to new location
+    res.cookie('ghl_location', user.activeLocation, {
+      domain: process.env.COOKIE_DOMAIN || undefined,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'none',
+      signed: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    
+    const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+    res.append(
+      'Set-Cookie',
+      `ghl_location=${encodeURIComponent(user.activeLocation)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+    );
+    
+    console.log(`Location switched: ${cookieLocation} → ${user.activeLocation}`);
+  } else {
+    // New location doesn't have the app installed
+    return res.status(422).json({
+      error: 'app_not_installed',
+      message: `App not installed for location ${user.activeLocation}`,
+      redirectUrl: '/oauth/install'
+    });
+  }
+}
+
 
     // If no cookie but we have an install for activeLocation, set it
     if (user.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
@@ -1938,7 +1962,72 @@ app.post('/dev/set-location/:locationId', async (req, res) => {
 
   res.json({ ok: true, locationId });
 });
-
+app.post('/api/switch-location', express.json(), async (req, res) => {
+  try {
+    const { locationId, encryptedData } = req.body;
+    
+    if (!locationId) {
+      return res.status(400).json({ error: 'Location ID required' });
+    }
+    
+    // Verify the new location has the app installed
+    if (!await installs.has(locationId)) {
+      return res.status(422).json({
+        error: 'app_not_installed',
+        message: `App not installed for location ${locationId}`,
+        redirectUrl: '/oauth/install'
+      });
+    }
+    
+    // Decrypt and validate user context if provided
+    if (encryptedData) {
+      try {
+        const decrypted = CryptoJS.AES.decrypt(
+          encryptedData,
+          process.env.GHL_APP_SHARED_SECRET
+        ).toString(CryptoJS.enc.Utf8);
+        const user = JSON.parse(decrypted);
+        
+        // Ensure the user has access to this location
+        if (user.activeLocation !== locationId) {
+          return res.status(403).json({ 
+            error: 'access_denied',
+            message: 'User does not have access to this location' 
+          });
+        }
+      } catch (e) {
+        console.error('User context validation failed:', e.message);
+        return res.status(400).json({ error: 'Invalid user context' });
+      }
+    }
+    
+    // Set the new location cookie
+    res.cookie('ghl_location', locationId, {
+      domain: process.env.COOKIE_DOMAIN || undefined,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'none',
+      signed: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    
+    const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+    res.append(
+      'Set-Cookie',
+      `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+    );
+    
+    res.json({ 
+      success: true, 
+      locationId,
+      message: 'Location switched successfully' 
+    });
+    
+  } catch (error) {
+    console.error('Location switch failed:', error.message);
+    res.status(500).json({ error: 'Location switch failed' });
+  }
+});
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
