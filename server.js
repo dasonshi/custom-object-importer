@@ -246,11 +246,11 @@ function verifySecureState(state) {
 async function requireAuth(req, res, next) {
   let locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 
-  // Allow explicit override (query or header)
+  // allow explicit override via ?locationId= or X-Location-Id
   const override = (req.query.locationId || req.get('x-location-id') || '').trim();
   if (override && override !== locationId) {
     if (await installs.has(override)) {
-      // Set signed cookie
+      // set signed cookie
       res.cookie('ghl_location', override, {
         domain: process.env.COOKIE_DOMAIN || undefined,
         httpOnly: true,
@@ -259,7 +259,7 @@ async function requireAuth(req, res, next) {
         signed: true,
         maxAge: 7 * 24 * 60 * 60 * 1000
       });
-      // Partitioned duplicate for cross-site iframes
+      // CHIPS / partitioned duplicate for cross-site requests
       const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
       res.append(
         'Set-Cookie',
@@ -267,28 +267,21 @@ async function requireAuth(req, res, next) {
       );
       locationId = override;
     } else {
-      return res.status(403).json({ error: 'invalid_location', message: 'Unknown or uninstalled locationId override' });
+      return res.status(403).json({ error: 'invalid_location', message: 'Unknown or uninstalled locationId' });
     }
   }
 
   if (!locationId) {
-    return res.status(401).json({
-      error: 'Authentication required',
-      message: 'Please complete OAuth setup first'
-    });
+    return res.status(401).json({ error: 'Authentication required', message: 'Please complete OAuth setup first' });
   }
 
-const hasInstall = await installs.has(locationId);
-  if (!hasInstall) 
-    {
-    res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
-    {
-      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-      res.append(
-        'Set-Cookie',
-        `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
-      );
-    }
+  const hasInstall = await installs.has(locationId);
+  if (!hasInstall) {
+    res.clearCookie('ghl_location', {
+      domain: process.env.COOKIE_DOMAIN || undefined, httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'none'
+    });
+    const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+    res.append('Set-Cookie', `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`);
     return res.status(401).json({ error: 'Installation not found', message: 'Please re-authenticate' });
   }
 
@@ -1126,6 +1119,36 @@ const createField = await axios.post(
       error: 'Fields import failed',
       details: e?.response?.data || e.message
     });
+  }
+});
+// Get object schema by key (proxied to GHL)
+// FE calls: GET /api/objects/:objectKey/schema?fetchProperties=true[&locationId=...]
+app.get('/api/objects/:objectKey/schema', requireAuth, handleLocationOverride, async (req, res) => {
+  try {
+    const locationId = req.locationId;
+    const { objectKey } = req.params;
+
+    // normalize: ensure custom_objects.<key> form
+    const cleanKey = String(objectKey).replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+
+    const token = await withAccessToken(locationId);
+    const r = await axios.get(
+      `${API_BASE}/objects/${encodeURIComponent(apiObjectKey)}`,
+      {
+        headers: authHeader(token),
+        params: {
+          locationId,
+          // bubble through the optional flag; GHL accepts it on this endpoint
+          fetchProperties: req.query.fetchProperties
+        }
+      }
+    );
+
+    res.json(r.data);
+  } catch (e) {
+    console.error('schema fetch error:', e?.response?.status, e?.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to fetch object schema', details: e?.response?.data || e.message });
   }
 });
 
