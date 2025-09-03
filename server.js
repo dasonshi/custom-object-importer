@@ -1739,7 +1739,7 @@ app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
     });
 
   } catch (e) {
-    
+
     res.status(500).json({
       error: 'Token scope debug failed',
       locationId,
@@ -1747,6 +1747,42 @@ app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
     });
   }
 });
+
+// Automatic agency branding (no user configuration needed)
+app.get('/api/agency-branding', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  
+  try {
+    const token = await withAccessToken(locationId);
+    
+    // Get company details from HighLevel installation
+    const installDetails = await axios.get(
+      `${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+      { headers: authHeader(token) }
+    );
+    
+    const company = installDetails.data.company || installDetails.data;
+    
+    // Return agency info for whitelabeling
+    res.json({
+      companyName: company.name || 'Agency',
+      companyLogo: company.logoUrl || null,
+      companyDomain: company.domain || null,
+      locationId: locationId
+    });
+    
+  } catch (e) {
+    console.error('Failed to fetch agency info:', e?.response?.data || e.message);
+    // Fallback to basic info
+    res.json({
+      companyName: 'Agency',
+      companyLogo: null,
+      companyDomain: null,
+      locationId: req.locationId
+    });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
