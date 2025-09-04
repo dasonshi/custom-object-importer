@@ -10,8 +10,11 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { InstallsDB } from './database.js';
-import HighLevel from '@gohighlevel/api-client';
 import CryptoJS from 'crypto-js';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const HighLevel = require('@gohighlevel/api-client');
 
 
 
