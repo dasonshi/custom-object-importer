@@ -11,11 +11,17 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { InstallsDB } from './database.js';
 import CryptoJS from 'crypto-js';
+// Replace the HighLevel lines with this temporary debug version:
 import { createRequire } from 'module';
-
 const require = createRequire(import.meta.url);
-const HighLevel = require('@gohighlevel/api-client');
+const HighLevelPackage = require('@gohighlevel/api-client');
 
+console.log('HighLevel package structure:', Object.keys(HighLevelPackage));
+console.log('Default export:', HighLevelPackage.default);
+console.log('HighLevel constructor:', HighLevelPackage.HighLevel);
+
+// Try different ways to access the constructor:
+const HighLevel = HighLevelPackage.default || HighLevelPackage.HighLevel || HighLevelPackage;
 
 
 
