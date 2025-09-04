@@ -23,6 +23,11 @@ const ghl = new HighLevel({
   clientSecret: process.env.GHL_CLIENT_SECRET
 });
 
+// Guard against SDKs that don’t expose these setters
+if (typeof ghl.setAccessToken !== 'function') {
+  ghl.setAccessToken = function (token) { this._accessToken = token; };
+}
+
 // Polyfill: some SDK builds don’t expose setAccessToken. Prevent runtime crashes.
 if (typeof ghl.setAccessToken !== 'function') {
   ghl.setAccessToken = function (token/*, locationId */) {
@@ -1433,9 +1438,20 @@ app.get('/', (req, res) => {
 });
 
 app.get('/launch', (req, res) => {
-  res
-    .status(200)
-    .send('Custom Object Importer is live. Use /oauth/install to connect, then /api/auth/status to verify.');
+  const target = process.env.LAUNCH_REDIRECT_URL; // optional: set to your app URL
+  res.status(200).send(`<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Installed</title></head>
+  <body style="font-family:system-ui;padding:24px">
+    <h1>✅ Connected</h1>
+    <p>You’re all set. This window will close automatically.</p>
+    <p><a href="/api/auth/status">Check Auth Status</a></p>
+    <script>
+      try { window.opener && window.opener.postMessage({ type: 'oauth_success' }, '*'); } catch {}
+      if (target) { location.replace(target); } else { setTimeout(() => window.close(), 300); }
+    </script>
+  </body>
+</html>`);
 });
 
 // ===== Debug Route: List custom object schemas =====
@@ -1480,9 +1496,13 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
     });
 
     // Also get location details for additional branding info
-    const locationDetails = await callGHLAPI(locationId, () => 
-      ghl.locations.get(locationId)
-    );
+const install = await installs.get(locationId);
+const locationDetails = await axios.get(`${API_BASE}/locations/${locationId}`, {
+  headers: {
+    Authorization: `Bearer ${install.access_token}`,
+    Version: '2021-07-28',
+  },
+});
 
     const installer = installerDetails.data;
     const location = locationDetails.data;
