@@ -10,11 +10,13 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { InstallsDB } from './database.js';
+import HighLevel from '@gohighlevel/api-client';
 import CryptoJS from 'crypto-js';
 
 
 
 
+const API_BASE = 'https://services.leadconnectorhq.com';
 const app = express();
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
 app.set('trust proxy', 1); // trust CF + Render chain
@@ -139,56 +141,88 @@ app.use(rateLimit({
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 
-const API_BASE = 'https://services.leadconnectorhq.com';
 // Generate encryption key from APP_SECRET
 const ENC_KEY = crypto.createHash('sha256')
   .update(String(process.env.APP_SECRET || 'dev-secret-change-me-in-production'))
   .digest();
 
-function encryptToken(token) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv);
-  const encrypted = Buffer.concat([cipher.update(Buffer.from(token, 'utf8')), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return Buffer.concat([iv, tag, encrypted]).toString('base64');
+// Initialize HighLevel SDK
+const ghl = new HighLevel({
+  clientId: process.env.GHL_CLIENT_ID,
+  clientSecret: process.env.GHL_CLIENT_SECRET
+});
+
+// Store tokens safely (use database in production)
+const installs = new InstallsDB(ENC_KEY);
+// ===== UTILITY FUNCTIONS =====
+function setAuthCookie(res, locationId) {
+  res.cookie('ghl_location', locationId, {
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+    signed: true,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+  
+  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+  res.append(
+    'Set-Cookie',
+    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+  );
 }
 
-function decryptToken(encryptedToken) {
-  const buffer = Buffer.from(encryptedToken, 'base64');
-  const iv = buffer.subarray(0, 12);
-  const tag = buffer.subarray(12, 28);
-  const encrypted = buffer.subarray(28);
+function clearAuthCookie(res) {
+  res.clearCookie('ghl_location', {
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none'
+  });
   
-  const decipher = crypto.createDecipheriv('aes-256-gcm', ENC_KEY, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+  res.append(
+    'Set-Cookie',
+    `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
+  );
+}
+
+function handleAPIError(res, error, operation = 'Operation') {
+  console.error(`${operation} error:`, error?.response?.data || error.message);
+  res.status(error?.response?.status || 400).json({
+    error: `${operation} failed`,
+    message: error?.response?.data?.message || error.message,
+    details: error?.response?.data || error.message
+  });
+}
+
+async function callGHLAPI(locationId, apiFunction) {
+  await withAccessToken(locationId);
+  return await apiFunction();
+}
+
+async function cleanupTempFiles(filePaths) {
+  for (const path of filePaths.filter(Boolean)) {
+    try {
+      await fs.unlink(path);
+    } catch (e) {
+      console.warn(`Failed to clean up temp file ${path}:`, e.message);
+    }
+  }
 }
 
 function validateEncryptionSetup() {
   if (process.env.NODE_ENV === 'production') {
     if (!process.env.APP_SECRET || process.env.APP_SECRET === 'dev-secret-change-me-in-production') {
-      console.error('❌ APP_SECRET must be set to a secure random value in production!');
+      console.error('⚠ APP_SECRET must be set to a secure random value in production!');
       process.exit(1);
     }
     if (process.env.APP_SECRET.length < 32) {
-      console.error('❌ APP_SECRET should be at least 32 characters long for security');
+      console.error('⚠ APP_SECRET should be at least 32 characters long for security');
       process.exit(1);
     }
   }
 }
-
-// Store tokens safely (use database in production)
-const installs = new InstallsDB(ENC_KEY);
-function authHeader(token) {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-    Version: '2021-07-28'
-  };
-}
-
-
 function createSecureState() {
   const payload = {
     timestamp: Date.now(),
@@ -251,20 +285,7 @@ async function requireAuth(req, res, next) {
   if (override && override !== locationId) {
     if (await installs.has(override)) {
       // set signed cookie
-      res.cookie('ghl_location', override, {
-        domain: process.env.COOKIE_DOMAIN || undefined,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'none',
-        signed: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000
-      });
-      // CHIPS / partitioned duplicate for cross-site requests
-      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-      res.append(
-        'Set-Cookie',
-        `ghl_location=${encodeURIComponent(override)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
-      );
+      setAuthCookie(res, override);
       locationId = override;
     } else {
       return res.status(403).json({ error: 'invalid_location', message: 'Unknown or uninstalled locationId' });
@@ -277,11 +298,7 @@ async function requireAuth(req, res, next) {
 
   const hasInstall = await installs.has(locationId);
   if (!hasInstall) {
-    res.clearCookie('ghl_location', {
-      domain: process.env.COOKIE_DOMAIN || undefined, httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'none'
-    });
-    const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-    res.append('Set-Cookie', `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`);
+clearAuthCookie(res);
     return res.status(401).json({ error: 'Installation not found', message: 'Please re-authenticate' });
   }
 
@@ -365,7 +382,7 @@ app.get('/api/auth/status', async (req, res) => {
 });
 // Logout endpoint
 app.post('/api/auth/logout', (req, res) => {
-res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
+clearAuthCookie(res);
   res.json({ message: 'Logged out successfully' });
 });
 // Disconnect and clear installation
@@ -377,14 +394,8 @@ app.post('/api/auth/disconnect', requireAuth, async (req, res) => {
     await installs.delete(locationId);
     
     // Clear cookies
-    res.clearCookie('ghl_location', COOKIE_CLEAR_OPTS);
-    {
-      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-      res.append(
-        'Set-Cookie',
-        `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
-      );
-    }
+    clearAuthCookie(res);
+
     
     res.json({ 
       message: 'Disconnected successfully',
@@ -424,38 +435,20 @@ if (typeof state === 'string' && state.length > 0) {
       redirect_uri: process.env.GHL_REDIRECT_URI
     });
 
-    const tokenResp = await axios.post(
-      `${API_BASE}/oauth/token`,
-      body.toString(),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
-
-    const { access_token, refresh_token, expires_in, locationId } = tokenResp.data;
-
-    await installs.set(locationId, {
-      access_token,
-      refresh_token,
-      expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000
-    });
-
-    // Set secure authentication cookie
-res.cookie('ghl_location', locationId, {
-  domain: process.env.COOKIE_DOMAIN || undefined, // e.g., importer.savvysales.ai
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',  // required when SameSite=None
-  sameSite: 'none',                                // needed if GHL loads you in an iframe
-  signed: true,
-  maxAge: 7 * 24 * 60 * 60 * 1000
+const tokenResp = await ghl.oauth.getAccessToken({
+  code: String(code),
+  redirectUri: process.env.GHL_REDIRECT_URI
 });
 
-// 👇 add this immediately after to support cross-site (Lovable) requests in Chrome
-{
-  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-  res.append(
-    'Set-Cookie',
-    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
-  );
-}
+const { access_token, refresh_token, expires_in, locationId } = tokenResp;
+
+await installs.set(locationId, {
+  access_token,
+  refresh_token,
+  expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000
+});
+    // Set secure authentication cookie
+setAuthCookie(res, locationId);
 
 // Add a CHIPS/Partitioned cookie so Chrome will send it cross-site from Lovable
 {
@@ -492,39 +485,36 @@ res.cookie('ghl_location', locationId, {
 
 // ===== Helper Functions =====
 async function withAccessToken(locationId) {
-  let row = await installs.get(locationId);
-  if (!row) throw new Error(`No installation found for locationId: ${locationId}`);
-
-  // Refresh if expiring within 30s
-  if (Date.now() > (row.expires_at ?? 0) - 30_000) {
+  const install = await installs.get(locationId);
+  if (!install) throw new Error(`No installation found for locationId: ${locationId}`);
+  
+  // Set the access token for this request
+  ghl.setAccessToken(install.access_token, locationId);
+  
+  // Check if token needs refresh
+  if (Date.now() > (install.expires_at ?? 0) - 30_000) {
     try {
-      const body = new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: row.refresh_token,
-        client_id: process.env.GHL_CLIENT_ID,
-        client_secret: process.env.GHL_CLIENT_SECRET
+      const refreshed = await ghl.oauth.refreshAccessToken({
+        refreshToken: install.refresh_token
       });
-
-      const r = await axios.post(
-        `${API_BASE}/oauth/token`,
-        body.toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-      );
-
-      row = {
-        access_token: r.data.access_token,
-        refresh_token: r.data.refresh_token || row.refresh_token,
-        expires_at: Date.now() + ((r.data.expires_in ?? 3600) * 1000) - 60_000
+      
+      const updatedInstall = {
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token || install.refresh_token,
+        expires_at: Date.now() + ((refreshed.expires_in ?? 3600) * 1000) - 60_000
       };
       
-      await installs.set(locationId, row);
+      await installs.set(locationId, updatedInstall);
+      ghl.setAccessToken(refreshed.access_token, locationId);
+      
+      return refreshed.access_token;
     } catch (e) {
-      console.error('Token refresh failed:', e?.response?.status, e?.response?.data || e.message);
+      console.error('Token refresh failed:', e.message);
       throw new Error('Failed to refresh access token');
     }
   }
-
-  return row.access_token;
+  
+  return install.access_token;
 }
 
 async function parseCSV(filePath) {
@@ -604,9 +594,6 @@ const locationId = req.locationId; // Use authenticated location
 
   let objPath, fldPath, recPath;
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
-
     // Step 1: Ensure schemas/objects exist
     objPath = req.files?.objects?.[0]?.path;
     const objects = objPath ? await parseCSV(objPath) : [];
@@ -619,11 +606,10 @@ const locationId = req.locationId; // Use authenticated location
 
 let existing = [];
 try {
-  const listSchemas = await axios.get(
-    `${API_BASE}/objects/`,
-    { headers, params: { locationId } }
-  );
-  existing = Array.isArray(listSchemas.data?.objects)
+const listSchemas = await callGHLAPI(locationId, () => 
+  ghl.objects.search({ locationId })
+);
+existing = Array.isArray(listSchemas.data?.objects)
     ? listSchemas.data.objects
     : Array.isArray(listSchemas.data?.data)
       ? listSchemas.data.data
@@ -685,12 +671,9 @@ try {
     locationId
   };
 
-  const create = await axios.post(
-    `${API_BASE}/objects/`,
-    payload,
-    { headers } // keep Version/Authorization headers from authHeader(token)
-  );
-
+const create = await callGHLAPI(locationId, () => 
+  ghl.objects.create(payload)
+);
   const createdId =
     create.data?.id || create.data?.data?.id || create.data?.object?.id;
   if (!createdId) throw new Error('No object id returned');
@@ -794,10 +777,8 @@ if (payload.options) {
     : payload.options;
 }
 
-const createField = await axios.post(
-  `${API_BASE}/custom-fields/`,
-  fieldPayload,
-  { headers }
+const createField = await callGHLAPI(locationId, () => 
+  ghl.customFields.create(fieldPayload)
 );
         if (!fieldCacheBySchema[schemaId]) fieldCacheBySchema[schemaId] = {};
         fieldCacheBySchema[schemaId][key] =
@@ -831,13 +812,7 @@ const createField = await axios.post(
     }
 
     // Clean up temp files
-    try {
-      if (objPath) await fs.unlink(objPath);
-      if (fldPath) await fs.unlink(fldPath);
-      if (recPath) await fs.unlink(recPath);
-    } catch (e) {
-      console.warn('Failed to clean up temp files:', e.message);
-    }
+   await cleanupTempFiles([objPath, fldPath, recPath]);
 
     res.json({
       ok: true,
@@ -873,12 +848,15 @@ app.get('/api/debug/install/:locationId', async (req, res) => {
 
   if (has) {
     try {
-      const token = await withAccessToken(locationId);
-      tokenOk = Boolean(token);
-      const r1 = await axios.get(`${API_BASE}/locations/${locationId}`, { headers: authHeader(token) });
-      locationOk = !!r1.data?.id || !!r1.data?.name;
-      const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, { headers: authHeader(token) });
-      companyOk = Boolean(r2.data?.company?.name || r2.data?.name);
+const token = await withAccessToken(locationId);
+tokenOk = Boolean(token);
+const r1 = await callGHLAPI(locationId, () => 
+  ghl.locations.get(locationId)
+);
+
+locationOk = !!r1.data?.id || !!r1.data?.name;
+const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, 
+  { headers: { Authorization: `Bearer ${token}` } });      companyOk = Boolean(r2.data?.company?.name || r2.data?.name);
     } catch (e) {
       logs.push(e?.response?.data || e.message);
     }
@@ -898,18 +876,15 @@ app.post('/api/objects/import', requireAuth, upload.single('objects'), async (re
   }
   
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
     const objects = await parseCSV(req.file.path);
     const schemaIdByKey = {};
     
     // Get existing schemas
     let existing = [];
     try {
-      const listSchemas = await axios.get(
-        `${API_BASE}/objects/`,
-        { headers, params: { locationId } }
-      );
+const listSchemas = await callGHLAPI(locationId, () => 
+  ghl.objects.search({ locationId })
+);
       existing = Array.isArray(listSchemas.data?.objects)
         ? listSchemas.data.objects
         : Array.isArray(listSchemas.data?.data)
@@ -961,7 +936,9 @@ app.post('/api/objects/import', requireAuth, upload.single('objects'), async (re
         locationId
       };
 
-      const createResp = await axios.post(`${API_BASE}/objects/`, payload, { headers });
+const createResp = await callGHLAPI(locationId, () => 
+  ghl.objects.create(payload)
+);
       const createdId = createResp.data?.id || createResp.data?.data?.id || createResp.data?.object?.id;
       
       if (createdId) {
@@ -970,7 +947,7 @@ app.post('/api/objects/import', requireAuth, upload.single('objects'), async (re
       }
     }
 
-    await fs.unlink(req.file.path).catch(() => {});
+await cleanupTempFiles([req.file.path]);
 
     res.json({
       success: true,
@@ -980,12 +957,9 @@ app.post('/api/objects/import', requireAuth, upload.single('objects'), async (re
     });
 
   } catch (e) {
-    console.error('Objects import error:', e?.response?.data || e.message);
-    res.status(400).json({
-      error: 'Objects import failed',
-      details: e?.response?.data || e.message
-    });
-  }
+  handleAPIError(res, e, 'Objects import');
+}
+
 });
 
 // 2. Import Fields for a Specific Object
@@ -998,15 +972,12 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
   }
 
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
-    
     // Get the schema ID for this object
-    const listSchemas = await axios.get(
-      `${API_BASE}/objects/`,
-      { headers, params: { locationId } }
-    );
-    const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
+const listSchemas = await callGHLAPI(locationId, () => 
+  ghl.objects.search({ locationId })
+);
+
+const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
     const schema = objects.find(obj => obj.key === objectKey || obj.key === `custom_objects.${objectKey}`);
     
     if (!schema) {
@@ -1086,10 +1057,8 @@ if (payload.options) {
       })
     : payload.options;
 }
-const createField = await axios.post(
-  `${API_BASE}/custom-fields/`,
-  fieldPayload,
-  { headers }
+const createField = await callGHLAPI(locationId, () => 
+  ghl.customFields.create(fieldPayload)
 );
         created.push({ 
           fieldKey, 
@@ -1102,8 +1071,7 @@ const createField = await axios.post(
       }
     }
 
-    await fs.unlink(req.file.path).catch(() => {});
-
+await cleanupTempFiles([req.file.path]);
     res.json({
       success: true,
       message: `Processed ${fields.length} fields for ${objectKey}`,
@@ -1114,11 +1082,7 @@ const createField = await axios.post(
     });
 
   } catch (e) {
-    console.error('Fields import error:', e?.response?.data || e.message);
-    res.status(400).json({
-      error: 'Fields import failed',
-      details: e?.response?.data || e.message
-    });
+  handleAPIError(res, e, 'Fields import');
   }
 });
 // Get object schema by key (proxied to GHL)
@@ -1132,18 +1096,12 @@ app.get('/api/objects/:objectKey/schema', requireAuth, handleLocationOverride, a
     const cleanKey = String(objectKey).replace(/^custom_objects\./, '');
     const apiObjectKey = `custom_objects.${cleanKey}`;
 
-    const token = await withAccessToken(locationId);
-    const r = await axios.get(
-      `${API_BASE}/objects/${encodeURIComponent(apiObjectKey)}`,
-      {
-        headers: authHeader(token),
-        params: {
-          locationId,
-          // bubble through the optional flag; GHL accepts it on this endpoint
-          fetchProperties: req.query.fetchProperties
-        }
-      }
-    );
+    const r = await callGHLAPI(locationId, () => 
+  ghl.objects.get(apiObjectKey, {
+    locationId,
+    fetchProperties: req.query.fetchProperties
+  })
+);
 
     res.json(r.data);
   } catch (e) {
@@ -1155,15 +1113,14 @@ app.get('/api/objects/:objectKey/schema', requireAuth, handleLocationOverride, a
 // 3. Import Records for a Specific Object
 app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
   const locationId = req.locationId;
-  const { objectKey } = req.params;
-  
+const { objectKey } = req.params;
+const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
+
   if (!req.file) {
     return res.status(400).json({ error: 'Records CSV file is required' });
   }
 
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
     
     // Get the full object key for API calls
     const fullObjectKey = objectKey.startsWith('custom_objects.') 
@@ -1277,8 +1234,7 @@ created.push({
       }
     }
 
-    await fs.unlink(req.file.path).catch(() => {});
-
+await cleanupTempFiles([req.file.path]);
     res.json({
       success: true,
       message: `Processed ${records.length} records for ${objectKey}`,
@@ -1293,21 +1249,16 @@ created.push({
     });
 
   } catch (e) {
-    console.error('Records import error:', e?.response?.data || e.message);
-    res.status(400).json({
-      error: 'Records import failed',
-      details: e?.response?.data || e.message
-    });
+   handleAPIError(res, e, 'Records import');
   }
 });
 // 4) Import Association TYPES (schema-level)
 app.post('/api/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
   const locationId = req.locationId;
+const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
   if (!req.file) return res.status(400).json({ error: 'Associations CSV file is required' });
 
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
     const rows = await parseCSV(req.file.path);
 
     const created = [];
@@ -1362,25 +1313,22 @@ app.post('/api/associations/types/import', requireAuth, upload.single('associati
       }
     }
 
-    await fs.unlink(req.file.path).catch(() => {});
-    res.json({ success: errors.length === 0, created, skipped, errors });
+await cleanupTempFiles([req.file.path]);    res.json({ success: errors.length === 0, created, skipped, errors });
 
   } catch (e) {
-    console.error('Association types import error:', e?.response?.data || e.message);
-    res.status(400).json({ error: 'Associations type import failed', details: e?.response?.data || e.message });
+  handleAPIError(res, e, 'Association types import');
   }
 });
 // 5) Import Custom Values
 app.post('/api/custom-values/import', requireAuth, upload.single('customValues'), async (req, res) => {
   const locationId = req.locationId;
+const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
   
   if (!req.file) {
     return res.status(400).json({ error: 'Custom values CSV file is required' });
   }
 
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
     const customValues = await parseCSV(req.file.path);
     
     const created = [];
@@ -1435,8 +1383,7 @@ app.post('/api/custom-values/import', requireAuth, upload.single('customValues')
       }
     }
 
-    await fs.unlink(req.file.path).catch(() => {});
-
+await cleanupTempFiles([req.file.path]);
     res.json({
       success: errors.length === 0,
       message: `Processed ${customValues.length} custom values`,
@@ -1452,11 +1399,7 @@ app.post('/api/custom-values/import', requireAuth, upload.single('customValues')
     });
 
   } catch (e) {
-    console.error('Custom values import error:', e?.response?.data || e.message);
-    res.status(400).json({
-      error: 'Custom values import failed',
-      details: e?.response?.data || e.message
-    });
+ handleAPIError(res, e, 'Custom values import');
   }
 });
 
@@ -1478,12 +1421,11 @@ app.get('/launch', (req, res) => {
 app.get('/api/objects', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId; // Use authenticated location
   try {
-    const token = await withAccessToken(locationId);
-    const r = await axios.get(
-      `${API_BASE}/objects/`,
-      { headers: authHeader(token), params: { locationId } }
-    );
-    
+const r = await callGHLAPI(locationId, () => 
+  ghl.objects.search({ locationId })
+);
+
+
     // Filter to only custom objects (exclude standard objects like contact, opportunity, business)
     const allObjects = Array.isArray(r.data?.objects) ? r.data.objects : 
                       Array.isArray(r.data?.data) ? r.data.data : 
@@ -1504,26 +1446,77 @@ app.get('/api/objects', requireAuth, handleLocationOverride, async (req, res) =>
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
 });
+// Agency/Company branding endpoint
+app.get('/api/agency-branding', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  
+  try {
+    // Get installer details which includes company info
+    const token = await withAccessToken(locationId);
+    const installerDetails = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    // Also get location details for additional branding info
+    const locationDetails = await callGHLAPI(locationId, () => 
+      ghl.locations.get(locationId)
+    );
+
+    const installer = installerDetails.data;
+    const location = locationDetails.data;
+
+    // Extract branding information
+    const branding = {
+      companyName: installer.company?.name || location.companyName || 'HighLevel',
+      logoUrl: installer.company?.logoUrl || location.logoUrl || null,
+      website: installer.company?.website || location.website || null,
+      primaryColor: '#6366f1',
+      secondaryColor: '#f3f4f6',
+      locationName: location.name || null,
+      timezone: location.timezone || null,
+      country: location.country || null
+    };
+
+    res.json(branding);
+
+  } catch (e) {
+    console.error('Agency branding fetch error:', e?.response?.data || e.message);
+    
+    // Fallback branding if API calls fail
+    res.json({
+      companyName: 'HighLevel',
+      logoUrl: null,
+      website: null,
+      primaryColor: '#6366f1',
+      secondaryColor: '#f3f4f6',
+      locationName: null,
+      timezone: null,
+      country: null
+    });
+  }
+});
+
 // Get custom fields for a specific object key
 app.get('/api/objects/:objectKey/fields', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId;
   let { objectKey } = req.params;
   
   try {
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
-    
+    const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
     // Always ensure we have the correct format by removing any existing prefix and adding it back
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
     const apiObjectKey = `custom_objects.${cleanKey}`;
     
     console.log(`Fields request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
     
-    const response = await axios.get(
-      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
-      { headers: authHeader(token), params: { locationId } }
-    );
-    
+const response = await callGHLAPI(locationId, () => 
+  ghl.customFields.search({ 
+    locationId,
+    objectKey: apiObjectKey 
+  })
+);
+
+
     const fields = response.data?.fields || [];
     
     // Get unique parent IDs that exist
@@ -1574,12 +1567,9 @@ app.get('/api/custom-values', requireAuth, handleLocationOverride, async (req, r
   const locationId = req.locationId;
   
   try {
-    const token = await withAccessToken(locationId);
-    const response = await axios.get(
-      `${API_BASE}/locations/${locationId}/customValues`,
-      { headers: authHeader(token) }
-    );
-    
+const response = await callGHLAPI(locationId, () => 
+  ghl.locations.customValues.get(locationId)
+);
     res.json(response.data);
   } catch (e) {
     console.error('Custom values fetch error:', e?.response?.data || e.message);
@@ -1678,15 +1668,16 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
   let { objectKey } = req.params;
 
   try {
-    const token = await withAccessToken(locationId);
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
     const apiObjectKey = `custom_objects.${cleanKey}`;
 
     console.log(`Template request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
 
-    const fieldsResponse = await axios.get(
-      `${API_BASE}/custom-fields/object-key/${apiObjectKey}`,
-      { headers: authHeader(token), params: { locationId } }
+    const fieldsResponse = await callGHLAPI(locationId, () => 
+      ghl.customFields.search({
+        locationId,
+        objectKey: apiObjectKey 
+      })
     );
 
     // Depending on API shape: fields under data.fields OR fields
@@ -1773,8 +1764,8 @@ app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
       return res.status(404).json({ error: 'Installation not found', locationId });
     }
 
-    const token = await withAccessToken(locationId);
-    const headers = { ...authHeader(token) };
+const token = await withAccessToken(locationId);
+    const headers = { Authorization: `Bearer ${token}` };
 
     const scopeTests = {
       'objects/schema.readonly': false,
@@ -1815,6 +1806,7 @@ app.get('/api/debug/token-scopes/:locationId', async (req, res) => {
         scopeTests['objects/record.readonly'] = true;
       }
     } catch (e) { console.log('Records read failed:', e?.response?.status); }
+
 
     const install = await installs.get(locationId);
     
@@ -1902,20 +1894,7 @@ if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocat
   // Check if we have an installation for the new location
   if (await installs.has(user.activeLocation)) {
     // Update cookie to new location
-    res.cookie('ghl_location', user.activeLocation, {
-      domain: process.env.COOKIE_DOMAIN || undefined,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'none',
-      signed: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
-    
-    const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-    res.append(
-      'Set-Cookie',
-      `ghl_location=${encodeURIComponent(user.activeLocation)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
-    );
+setAuthCookie(res, user.activeLocation);
     
     console.log(`Location switched: ${cookieLocation} → ${user.activeLocation}`);
   } else {
@@ -1931,29 +1910,17 @@ if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocat
 
     // If no cookie but we have an install for activeLocation, set it
     if (user.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
-      res.cookie('ghl_location', user.activeLocation, {
-        domain: process.env.COOKIE_DOMAIN || undefined,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'none',
-        signed: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000
-      });
-      const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-      res.append(
-        'Set-Cookie',
-        `ghl_location=${encodeURIComponent(user.activeLocation)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
-      );
-    }
+setAuthCookie(res, user.activeLocation);
+
+}
 
     // 4) Location details (UI friendly)
     let location = null;
     if (user.activeLocation && await installs.has(user.activeLocation)) {
       try {
-        const token = await withAccessToken(user.activeLocation);
-        const r = await axios.get(`${API_BASE}/locations/${user.activeLocation}`, {
-          headers: authHeader(token)
-        });
+const r = await callGHLAPI(user.activeLocation, () => 
+  ghl.locations.get(user.activeLocation)
+);
         const loc = r.data || {};
         location = {
           id: user.activeLocation,
@@ -2064,20 +2031,7 @@ app.post('/api/switch-location', express.json(), async (req, res) => {
     }
     
     // Set the new location cookie
-    res.cookie('ghl_location', locationId, {
-      domain: process.env.COOKIE_DOMAIN || undefined,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'none',
-      signed: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
-    
-    const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-    res.append(
-      'Set-Cookie',
-      `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
-    );
+    setAuthCookie(res, locationId);
     
     res.json({ 
       success: true, 
@@ -2095,7 +2049,6 @@ app.post('/api/switch-location', express.json(), async (req, res) => {
 app.get('/api/objects/:objectKey/schema', requireAuth, async (req, res) => {
   try {
     const locationId = req.locationId;
-    const token = await withAccessToken(locationId);
     const { objectKey } = req.params;
 
     const cleanKey = String(objectKey).replace(/^custom_objects\./, '');
@@ -2106,11 +2059,9 @@ app.get('/api/objects/:objectKey/schema', requireAuth, async (req, res) => {
       params.fetchProperties = 'true'; // <- the GHL docs option you found
     }
 
-    const r = await axios.get(`${API_BASE}/objects/${apiObjectKey}`, {
-      headers: authHeader(token),
-      params
-    });
-
+const r = await callGHLAPI(locationId, () => 
+      ghl.objects.get(apiObjectKey, params)
+    );
     res.json(r.data); // shape includes schema, and (with fetchProperties=true) its fields/properties
   } catch (e) {
     console.error('schema fetch failed:', e?.response?.status, e?.response?.data || e.message);
