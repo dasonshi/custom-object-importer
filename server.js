@@ -437,10 +437,13 @@ if (typeof state === 'string' && state.length > 0) {
     });
 
 const tokenResp = await ghl.oauth.getAccessToken({
+  client_id: process.env.GHL_CLIENT_ID,
+  client_secret: process.env.GHL_CLIENT_SECRET,
   code: String(code),
-  redirectUri: process.env.GHL_REDIRECT_URI
+  grant_type: 'authorization_code',
+  // optional but harmless to include
+  redirect_uri: process.env.GHL_REDIRECT_URI,
 });
-
 const { access_token, refresh_token, expires_in, locationId } = tokenResp;
 
 await installs.set(locationId, {
