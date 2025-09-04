@@ -877,9 +877,21 @@ app.get('/api/debug/install/:locationId', async (req, res) => {
     try {
 const token = await withAccessToken(locationId);
 tokenOk = Boolean(token);
-const r1 = await callGHLAPI(locationId, () => 
-  ghl.locations.get(locationId)
+const install = await installs.get(locationId);
+if (!install?.access_token) throw new Error(`No tokens for location ${locationId}`);
+
+const { data } = await axios.get(
+  `https://services.leadconnectorhq.com/locations/${encodeURIComponent(locationId)}`,
+  {
+    headers: {
+      Authorization: `Bearer ${install.access_token}`,
+      Version: '2021-07-28',
+    },
+    timeout: 30000,
+  }
 );
+// keep the old shape so the rest of your code that expects r1.data keeps working
+const r1 = { data };
 
 locationOk = !!r1.data?.id || !!r1.data?.name;
 const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, 
@@ -1991,10 +2003,20 @@ setAuthCookie(res, user.activeLocation);
     let location = null;
     if (user.activeLocation && await installs.has(user.activeLocation)) {
       try {
-const r = await callGHLAPI(user.activeLocation, () => 
-  ghl.locations.get(user.activeLocation)
+const install = await installs.get(user.activeLocation);
+if (!install?.access_token) throw new Error('No tokens for this location');
+
+const { default: axios } = await import('axios');
+const { data: loc } = await axios.get(
+  `https://services.leadconnectorhq.com/locations/${encodeURIComponent(user.activeLocation)}`,
+  {
+    headers: {
+      Authorization: `Bearer ${install.access_token}`,
+      Version: '2021-07-28',
+    },
+    timeout: 30000,
+  }
 );
-        const loc = r.data || {};
         location = {
           id: user.activeLocation,
           name: loc.name || null,
