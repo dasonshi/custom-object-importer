@@ -11,6 +11,8 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { InstallsDB } from './database.js';
 import CryptoJS from 'crypto-js';
+
+
 // Replace the HighLevel lines with this temporary debug version:
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
@@ -20,6 +22,14 @@ const ghl = new HighLevel({
   clientId: process.env.GHL_CLIENT_ID,
   clientSecret: process.env.GHL_CLIENT_SECRET
 });
+
+// Polyfill: some SDK builds don’t expose setAccessToken. Prevent runtime crashes.
+if (typeof ghl.setAccessToken !== 'function') {
+  ghl.setAccessToken = function (token/*, locationId */) {
+    // no-op: callers expect this to exist; routes using axios attach the header directly
+    this._accessToken = token;
+  };
+}
 
 
 
@@ -441,17 +451,38 @@ const tokenResp = await ghl.oauth.getAccessToken({
   client_secret: process.env.GHL_CLIENT_SECRET,
   code: String(code),
   grant_type: 'authorization_code',
-  // optional but harmless to include
   redirect_uri: process.env.GHL_REDIRECT_URI,
 });
-const { access_token, refresh_token, expires_in, locationId } = tokenResp;
 
+const { access_token, refresh_token, expires_in, locationId } = tokenResp || {};
+
+if (!locationId) {
+  // No location yet? Stash tokens temporarily and let FE finish via /api/app-context
+  const payload = JSON.stringify({
+    access_token,
+    refresh_token,
+    expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
+  });
+
+  const encrypted = CryptoJS.AES.encrypt(payload, process.env.APP_SECRET || 'dev-secret-change-me-in-production').toString();
+
+  res.cookie('ghl_pending_tokens', encrypted, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+    signed: true,
+    maxAge: 5 * 60 * 1000 // 5 minutes
+  });
+
+  return res.redirect('/launch');
+}
+
+// Normal case: we have locationId, save and set cookies
 await installs.set(locationId, {
   access_token,
   refresh_token,
   expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000
 });
-    // Set secure authentication cookie
 setAuthCookie(res, locationId);
 
 // Add a CHIPS/Partitioned cookie so Chrome will send it cross-site from Lovable
@@ -463,20 +494,7 @@ setAuthCookie(res, locationId);
   );
 }
 
-
-    res.send(`<!doctype html><html><body style="font-family:system-ui;padding:24px">
-      <h1>✅ Connected Successfully</h1>
-      <p>Authenticated for location <code>${locationId}</code>.</p>
-      <p><a href="/api/auth/status">Check Auth Status</a> | 
-         <a href="/api/objects">View Objects</a></p>
-      <script>
-        // Auto-close if opened in popup
-        if (window.opener) {
-          window.opener.postMessage({ type: 'oauth_success', locationId: '${locationId}' }, '*');
-          window.close();
-        }
-      </script>
-    </body></html>`);
+return res.redirect('/launch');
     
   } catch (e) {
     console.error('OAuth callback error:', e?.response?.status, e?.response?.data || e.message);
@@ -1892,7 +1910,38 @@ app.post('/api/app-context', express.json(), async (req, res) => {
       email: user.email
     });
 
-    // 3) Enforce cookie vs activeLocation
+// (NEW) 2.5) If FE provides an activeLocation and we have pending tokens from OAuth, finish the install now
+if (user.activeLocation && req.signedCookies?.ghl_pending_tokens) {
+  try {
+    const bytes = CryptoJS.AES.decrypt(
+      req.signedCookies.ghl_pending_tokens,
+      process.env.APP_SECRET || 'dev-secret-change-me-in-production'
+    );
+    const str = bytes.toString(CryptoJS.enc.Utf8);
+    const pending = JSON.parse(str || '{}');
+
+    if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
+      await installs.set(user.activeLocation, {
+        access_token: pending.access_token,
+        refresh_token: pending.refresh_token,
+        expires_at: pending.expires_at
+      });
+
+      // Clear the pending cookie and set normal auth cookie
+      res.clearCookie('ghl_pending_tokens', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'none',
+        signed: true
+      });
+      setAuthCookie(res, user.activeLocation);
+    }
+  } catch (e) {
+    console.warn('Failed to consume pending tokens:', e?.message || e);
+  }
+}
+
+// 3) Enforce cookie vs activeLocation
     const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
   // Check if we have an installation for the new location
