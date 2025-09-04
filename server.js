@@ -15,13 +15,11 @@ import CryptoJS from 'crypto-js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const HighLevelPackage = require('@gohighlevel/api-client');
-
-console.log('HighLevel package structure:', Object.keys(HighLevelPackage));
-console.log('Default export:', HighLevelPackage.default);
-console.log('HighLevel constructor:', HighLevelPackage.HighLevel);
-
-// Try different ways to access the constructor:
 const HighLevel = HighLevelPackage.default || HighLevelPackage.HighLevel || HighLevelPackage;
+const ghl = new HighLevel({
+  clientId: process.env.GHL_CLIENT_ID,
+  clientSecret: process.env.GHL_CLIENT_SECRET
+});
 
 
 
@@ -154,12 +152,6 @@ app.use(rateLimit({
 const ENC_KEY = crypto.createHash('sha256')
   .update(String(process.env.APP_SECRET || 'dev-secret-change-me-in-production'))
   .digest();
-
-// Initialize HighLevel SDK
-const ghl = new HighLevel({
-  clientId: process.env.GHL_CLIENT_ID,
-  clientSecret: process.env.GHL_CLIENT_SECRET
-});
 
 // Store tokens safely (use database in production)
 const installs = new InstallsDB(ENC_KEY);
