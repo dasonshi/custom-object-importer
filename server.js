@@ -22,6 +22,28 @@ const ghl = new HighLevel({
   clientId: process.env.GHL_CLIENT_ID,
   clientSecret: process.env.GHL_CLIENT_SECRET
 });
+// ADD THIS DEBUG CODE:
+console.log('=== GHL SDK Methods ===');
+console.log('ghl methods:', Object.keys(ghl));
+console.log('ghl.objects exists?', !!ghl.objects);
+if (ghl.objects) {
+  console.log('ghl.objects methods:', Object.keys(ghl.objects));
+}
+console.log('ghl.customFields exists?', !!ghl.customFields);
+if (ghl.customFields) {
+  console.log('ghl.customFields methods:', Object.keys(ghl.customFields));
+}
+console.log('ghl.locations exists?', !!ghl.locations);
+if (ghl.locations) {
+  console.log('ghl.locations methods:', Object.keys(ghl.locations));
+  if (ghl.locations.customFields) {
+    console.log('ghl.locations.customFields methods:', Object.keys(ghl.locations.customFields));
+  }
+  if (ghl.locations.customValues) {
+    console.log('ghl.locations.customValues methods:', Object.keys(ghl.locations.customValues));
+  }
+}
+console.log('======================');
 
 // Guard against SDKs that don’t expose these setters
 if (typeof ghl.setAccessToken !== 'function') {
@@ -40,6 +62,7 @@ if (typeof ghl.setAccessToken !== 'function') {
 
 const API_BASE = 'https://services.leadconnectorhq.com';
 const app = express();
+
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
 app.set('trust proxy', 1); // trust CF + Render chain
 app.disable('x-powered-by');
@@ -1513,6 +1536,7 @@ const locationDetails = await axios.get(`${API_BASE}/locations/${locationId}`, {
   headers: {
     Authorization: `Bearer ${install.access_token}`,
     Version: '2021-07-28',
+    Accept: 'application/json'
   },
 });
 
@@ -2008,16 +2032,17 @@ if (!install?.access_token) throw new Error('No tokens for this location');
 
 const { default: axios } = await import('axios');
 const { data: loc } = await axios.get(
-  `https://services.leadconnectorhq.com/locations/${encodeURIComponent(user.activeLocation)}`,
+  `${API_BASE}/locations/${encodeURIComponent(user.activeLocation)}`,
   {
     headers: {
       Authorization: `Bearer ${install.access_token}`,
       Version: '2021-07-28',
+      Accept: 'application/json'
     },
     timeout: 30000,
   }
 );
-        location = {
+          location = {
           id: user.activeLocation,
           name: loc.name || null,
           companyName: loc.companyName || null,
