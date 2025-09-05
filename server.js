@@ -1531,10 +1531,12 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
   try {
     // Get installer details which includes company info
     const token = await withAccessToken(locationId);
-    const installerDetails = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
+const installerDetails = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  }
+});
     // Also get location details for additional branding info
 const install = await installs.get(locationId);
 const locationDetails = await axios.get(`${API_BASE}/locations/${locationId}`, {
