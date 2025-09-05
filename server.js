@@ -22,28 +22,6 @@ const ghl = new HighLevel({
   clientId: process.env.GHL_CLIENT_ID,
   clientSecret: process.env.GHL_CLIENT_SECRET
 });
-// ADD THIS DEBUG CODE:
-console.log('=== GHL SDK Methods ===');
-console.log('ghl methods:', Object.keys(ghl));
-console.log('ghl.objects exists?', !!ghl.objects);
-if (ghl.objects) {
-  console.log('ghl.objects methods:', Object.keys(ghl.objects));
-}
-console.log('ghl.customFields exists?', !!ghl.customFields);
-if (ghl.customFields) {
-  console.log('ghl.customFields methods:', Object.keys(ghl.customFields));
-}
-console.log('ghl.locations exists?', !!ghl.locations);
-if (ghl.locations) {
-  console.log('ghl.locations methods:', Object.keys(ghl.locations));
-  if (ghl.locations.customFields) {
-    console.log('ghl.locations.customFields methods:', Object.keys(ghl.locations.customFields));
-  }
-  if (ghl.locations.customValues) {
-    console.log('ghl.locations.customValues methods:', Object.keys(ghl.locations.customValues));
-  }
-}
-console.log('======================');
 
 // Guard against SDKs that don’t expose these setters
 if (typeof ghl.setAccessToken !== 'function') {
@@ -690,9 +668,14 @@ const locationId = req.locationId; // Use authenticated location
 
 let existing = [];
 try {
-const listSchemas = await callGHLAPI(locationId, () => 
-  ghl.objects.search({ locationId })
-);
+const token = await withAccessToken(locationId);
+const listSchemas = await axios.get(`${API_BASE}/objects/`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params: { locationId }
+});
 existing = Array.isArray(listSchemas.data?.objects)
     ? listSchemas.data.objects
     : Array.isArray(listSchemas.data?.data)
@@ -755,9 +738,13 @@ try {
     locationId
   };
 
-const create = await callGHLAPI(locationId, () => 
-  ghl.objects.create(payload)
-);
+const token = await withAccessToken(locationId);
+const create = await axios.post(`${API_BASE}/objects/`, payload, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  }
+});
   const createdId =
     create.data?.id || create.data?.data?.id || create.data?.object?.id;
   if (!createdId) throw new Error('No object id returned');
@@ -819,8 +806,8 @@ const fieldPayload = {
   placeholder: row.placeholder || "",
   showInForms: row.show_in_forms !== undefined ? String(row.show_in_forms).toLowerCase() === 'true' : true,
   dataType: (payload.type || 'TEXT').toUpperCase(),
-  fieldKey: `custom_objects.${objectKey}.${payload.key}`,
-  objectKey: `custom_objects.${objectKey}`
+  fieldKey: `custom_objects.${row.object_key}.${payload.key}`,
+  objectKey: `custom_objects.${row.object_key}`
 };
 
 // Add optional attributes if provided
@@ -855,15 +842,14 @@ if (payload.options) {
       })
     : payload.options;
 }
-if (payload.options) {
-  fieldPayload.options = Array.isArray(payload.options) 
-    ? payload.options.map(opt => typeof opt === 'string' ? { key: opt.toLowerCase(), label: opt } : opt)
-    : payload.options;
-}
 
-const createField = await callGHLAPI(locationId, () => 
-  ghl.customFields.create(fieldPayload)
-);
+const token = await withAccessToken(locationId);
+const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  }
+});
         if (!fieldCacheBySchema[schemaId]) fieldCacheBySchema[schemaId] = {};
         fieldCacheBySchema[schemaId][key] =
           createField.data?.id || createField.data?.data?.id || createField.data?.property?.id;
@@ -978,9 +964,14 @@ app.post('/api/objects/import', requireAuth, upload.single('objects'), async (re
     // Get existing schemas
     let existing = [];
     try {
-const listSchemas = await callGHLAPI(locationId, () => 
-  ghl.objects.search({ locationId })
-);
+const token = await withAccessToken(locationId);
+const listSchemas = await axios.get(`${API_BASE}/objects/`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params: { locationId }
+});
       existing = Array.isArray(listSchemas.data?.objects)
         ? listSchemas.data.objects
         : Array.isArray(listSchemas.data?.data)
@@ -1032,9 +1023,13 @@ const listSchemas = await callGHLAPI(locationId, () =>
         locationId
       };
 
-const createResp = await callGHLAPI(locationId, () => 
-  ghl.objects.create(payload)
-);
+const token = await withAccessToken(locationId);
+const createResp = await axios.post(`${API_BASE}/objects/`, payload, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  }
+});
       const createdId = createResp.data?.id || createResp.data?.data?.id || createResp.data?.object?.id;
       
       if (createdId) {
@@ -1069,9 +1064,14 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
 
   try {
     // Get the schema ID for this object
-const listSchemas = await callGHLAPI(locationId, () => 
-  ghl.objects.search({ locationId })
-);
+const token = await withAccessToken(locationId);
+const listSchemas = await axios.get(`${API_BASE}/objects/`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params: { locationId }
+});
 
 const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
     const schema = objects.find(obj => obj.key === objectKey || obj.key === `custom_objects.${objectKey}`);
@@ -1117,8 +1117,8 @@ const fieldPayload = {
   placeholder: row.placeholder || "",
   showInForms: row.show_in_forms !== undefined ? String(row.show_in_forms).toLowerCase() === 'true' : true,
   dataType: (payload.type || 'TEXT').toUpperCase(),
-  fieldKey: `custom_objects.${objectKey}.${payload.key}`,
-  objectKey: `custom_objects.${objectKey}`
+  fieldKey: `custom_objects.${row.object_key}.${payload.key}`,
+  objectKey: `custom_objects.${row.object_key}`
 };
 
 // Add optional attributes if provided
@@ -1138,24 +1138,13 @@ if (row.parent_id) {
   fieldPayload.parentId = row.parent_id;
 }
 
-if (payload.options) {
-  fieldPayload.options = Array.isArray(payload.options) 
-    ? payload.options.map(opt => {
-        if (typeof opt === 'string') {
-          return { key: opt.toLowerCase(), label: opt };
-        }
-        // Handle objects with key, label, and optional url
-        return {
-          key: opt.key || opt.label?.toLowerCase() || opt,
-          label: opt.label || opt.key || opt,
-          ...(opt.url && { url: opt.url })
-        };
-      })
-    : payload.options;
-}
-const createField = await callGHLAPI(locationId, () => 
-  ghl.customFields.create(fieldPayload)
-);
+const token = await withAccessToken(locationId);
+const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  }
+});
         created.push({ 
           fieldKey, 
           id: createField.data?.id || createField.data?.data?.id,
@@ -1183,28 +1172,6 @@ await cleanupTempFiles([req.file.path]);
 });
 // Get object schema by key (proxied to GHL)
 // FE calls: GET /api/objects/:objectKey/schema?fetchProperties=true[&locationId=...]
-app.get('/api/objects/:objectKey/schema', requireAuth, handleLocationOverride, async (req, res) => {
-  try {
-    const locationId = req.locationId;
-    const { objectKey } = req.params;
-
-    // normalize: ensure custom_objects.<key> form
-    const cleanKey = String(objectKey).replace(/^custom_objects\./, '');
-    const apiObjectKey = `custom_objects.${cleanKey}`;
-
-    const r = await callGHLAPI(locationId, () => 
-  ghl.objects.get(apiObjectKey, {
-    locationId,
-    fetchProperties: req.query.fetchProperties
-  })
-);
-
-    res.json(r.data);
-  } catch (e) {
-    console.error('schema fetch error:', e?.response?.status, e?.response?.data || e.message);
-    res.status(500).json({ error: 'Failed to fetch object schema', details: e?.response?.data || e.message });
-  }
-});
 
 // 3. Import Records for a Specific Object
 app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
@@ -1528,10 +1495,14 @@ app.get('/launch', (req, res) => {
 app.get('/api/objects', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId; // Use authenticated location
   try {
-const r = await callGHLAPI(locationId, () => 
-  ghl.objects.search({ locationId })
-);
-
+const token = await withAccessToken(locationId);
+const r = await axios.get(`${API_BASE}/objects/`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params: { locationId }
+});
 
     // Filter to only custom objects (exclude standard objects like contact, opportunity, business)
     const allObjects = Array.isArray(r.data?.objects) ? r.data.objects : 
@@ -1621,13 +1592,17 @@ app.get('/api/objects/:objectKey/fields', requireAuth, handleLocationOverride, a
     
     console.log(`Fields request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
     
-const response = await callGHLAPI(locationId, () => 
-  ghl.customFields.search({ 
+const token = await withAccessToken(locationId);
+const response = await axios.get(`${API_BASE}/custom-fields/`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params: { 
     locationId,
     objectKey: apiObjectKey 
-  })
-);
-
+  }
+});
 
     const fields = response.data?.fields || [];
     
@@ -1679,9 +1654,13 @@ app.get('/api/custom-values', requireAuth, handleLocationOverride, async (req, r
   const locationId = req.locationId;
   
   try {
-const response = await callGHLAPI(locationId, () => 
-  ghl.locations.customValues.get(locationId)
-);
+const token = await withAccessToken(locationId);
+const response = await axios.get(`${API_BASE}/locations/${locationId}/customValues`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  }
+});
     res.json(response.data);
   } catch (e) {
     console.error('Custom values fetch error:', e?.response?.data || e.message);
@@ -1785,12 +1764,17 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
 
     console.log(`Template request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
 
-    const fieldsResponse = await callGHLAPI(locationId, () => 
-      ghl.customFields.search({
-        locationId,
-        objectKey: apiObjectKey 
-      })
-    );
+const token = await withAccessToken(locationId);
+const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params: {
+    locationId,
+    objectKey: apiObjectKey 
+  }
+});
 
     // Depending on API shape: fields under data.fields OR fields
     const fields = Array.isArray(fieldsResponse.data?.fields)
@@ -2213,9 +2197,14 @@ app.get('/api/objects/:objectKey/schema', requireAuth, async (req, res) => {
       params.fetchProperties = 'true'; // <- the GHL docs option you found
     }
 
-const r = await callGHLAPI(locationId, () => 
-      ghl.objects.get(apiObjectKey, params)
-    );
+const token = await withAccessToken(locationId);
+const r = await axios.get(`${API_BASE}/objects/${apiObjectKey}`, {
+  headers: { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  },
+  params
+});
     res.json(r.data); // shape includes schema, and (with fetchProperties=true) its fields/properties
   } catch (e) {
     console.error('schema fetch failed:', e?.response?.status, e?.response?.data || e.message);
