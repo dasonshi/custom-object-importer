@@ -938,7 +938,13 @@ const r1 = { data };
 
 locationOk = !!r1.data?.id || !!r1.data?.name;
 const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, 
-  { headers: { Authorization: `Bearer ${token}` } });      companyOk = Boolean(r2.data?.company?.name || r2.data?.name);
+  { 
+    headers: { 
+      Authorization: `Bearer ${token}`,
+      Version: '2021-07-28'
+    } 
+  });      
+  companyOk = Boolean(r2.data?.company?.name || r2.data?.name);
     } catch (e) {
       logs.push(e?.response?.data || e.message);
     }
