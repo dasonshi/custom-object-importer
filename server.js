@@ -390,6 +390,40 @@ app.get('/health', async (req, res) => {
   
   res.status(200).json(healthData);
 });
+// Debug route to check SDK methods
+app.get('/api/debug/sdk-methods', (req, res) => {
+  const methods = {
+    ghl_keys: Object.keys(ghl),
+    has_objects: !!ghl.objects,
+    has_customFields: !!ghl.customFields,
+    has_locations: !!ghl.locations,
+    has_oauth: !!ghl.oauth,
+    has_contacts: !!ghl.contacts,
+    has_request: typeof ghl.request === 'function',
+    has_setAccessToken: typeof ghl.setAccessToken === 'function'
+  };
+  
+  if (ghl.objects) {
+    methods.objects_methods = Object.keys(ghl.objects);
+  }
+  if (ghl.customFields) {
+    methods.customFields_methods = Object.keys(ghl.customFields);
+  }
+  if (ghl.locations) {
+    methods.locations_methods = Object.keys(ghl.locations);
+    if (ghl.locations.customFields) {
+      methods.locations_customFields_methods = Object.keys(ghl.locations.customFields);
+    }
+    if (ghl.locations.customValues) {
+      methods.locations_customValues_methods = Object.keys(ghl.locations.customValues);
+    }
+  }
+  if (ghl.oauth) {
+    methods.oauth_methods = Object.keys(ghl.oauth);
+  }
+  
+  res.json(methods);
+});
 // Auth status endpoint
 app.get('/api/auth/status', async (req, res) => {
   const locationId = req.signedCookies?.ghl_location;
