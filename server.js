@@ -1480,23 +1480,95 @@ app.get('/', (req, res) => {
 });
 
 app.get('/launch', (req, res) => {
-  const target = process.env.LAUNCH_REDIRECT_URL; // optional: set to your app URL
   res.status(200).send(`<!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>Installed</title></head>
-  <body style="font-family:system-ui;padding:24px">
-    <h1>✅ Connected</h1>
-    <p>You’re all set. This window will close automatically.</p>
-    <p><a href="/api/auth/status">Check Auth Status</a></p>
+  <head>
+    <meta charset="utf-8">
+    <title>Connected</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        padding: 40px;
+        text-align: center;
+        background: #f5f5f5;
+      }
+      .container {
+        max-width: 400px;
+        margin: 100px auto;
+        background: white;
+        padding: 40px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      h1 {
+        color: #22c55e;
+        font-size: 24px;
+        margin-bottom: 16px;
+      }
+      p {
+        color: #666;
+        margin-bottom: 20px;
+      }
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #22c55e;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>✓ Connected Successfully</h1>
+      <div class="spinner"></div>
+      <p>Closing window...</p>
+    </div>
     <script>
-      try { window.opener && window.opener.postMessage({ type: 'oauth_success' }, '*'); } catch {}
-      if (target) { location.replace(target); } else { setTimeout(() => window.close(), 300); }
+      // Immediately try to notify parent and close
+      (function() {
+        // Notify parent window (if opened as popup)
+        if (window.opener) {
+          try {
+            window.opener.postMessage({ type: 'oauth_success' }, '*');
+          } catch (e) {
+            console.error('Could not message parent:', e);
+          }
+        }
+        
+        // Also try parent frame (if in iframe)
+        if (window.parent && window.parent !== window) {
+          try {
+            window.parent.postMessage({ type: 'oauth_success' }, '*');
+          } catch (e) {
+            console.error('Could not message parent frame:', e);
+          }
+        }
+        
+        // Auto close after brief delay to ensure message is sent
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch (e) {
+            // If close fails, show a message
+            document.querySelector('.container').innerHTML = 
+              '<h1>✓ Connected Successfully</h1>' +
+              '<p>You can now close this window and return to the app.</p>';
+          }
+        }, 500); // Half second delay to ensure message delivery
+      })();
     </script>
   </body>
 </html>`);
 });
 
-// ===== Debug Route: List custom object schemas =====
+
 // ===== Debug Route: List objects =====
 app.get('/api/objects', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId; // Use authenticated location
