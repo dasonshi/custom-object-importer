@@ -1609,27 +1609,10 @@ const r = await axios.get(`${API_BASE}/objects/`, {
 // Agency/Company branding endpoint
 app.get('/api/agency-branding', requireAuth, async (req, res) => {
   const locationId = req.locationId;
-  const APP_ID = process.env.GHL_APP_ID || '68b87115d7dcf1e9cc0c80a0';
-
+  
   try {
-    // Use the actual app ID, not the client ID
-    const APP_ID = '68b87115d7dcf1e9cc0c80a0'; // Your actual app ID from HighLevel
-    
-    const token = await withAccessToken(locationId);
-    const installerDetails = await axios.get(
-      `${API_BASE}/marketplace/app/${APP_ID}/installations`,
-      {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Version': '2021-07-28',
-          'Accept': 'application/json'
-        }
-      }
-    );
-    
-    // Also get location details for additional branding info
     const install = await installs.get(locationId);
-    const locationDetails = await axios.get(
+    const locationResponse = await axios.get(
       `${API_BASE}/locations/${locationId}`,
       {
         headers: {
@@ -1640,19 +1623,29 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
       }
     );
 
-    const installer = installerDetails.data;
-    const location = locationDetails.data;
-
-    // Extract branding information
+    const location = locationResponse.data.location || locationResponse.data;
+    
+    // According to the API docs, company info should be in the location object
     const branding = {
-      companyName: installer.company?.name || location.companyName || 'HighLevel',
-      logoUrl: installer.company?.logoUrl || location.logoUrl || null,
-      website: installer.company?.website || location.website || null,
-      primaryColor: '#6366f1',
-      secondaryColor: '#f3f4f6',
+      // Company-level data from the location
+      companyName: location.companyName || location.name || 'HighLevel',
+      logoUrl: location.logo || location.logoUrl || null,
+      website: location.website || null,
+      
+      // Location-specific data
       locationName: location.name || null,
+      email: location.email || null,
+      phone: location.phone || null,
+      address: location.address || null,
+      city: location.city || null,
+      state: location.state || null,
+      country: location.country || null,
+      postalCode: location.postalCode || null,
       timezone: location.timezone || null,
-      country: location.country || null
+      
+      // Default theme colors
+      primaryColor: '#6366f1',
+      secondaryColor: '#f3f4f6'
     };
 
     res.json(branding);
@@ -1660,7 +1653,7 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('Agency branding fetch error:', e?.response?.data || e.message);
     
-    // Fallback branding if API calls fail
+    // Return default branding on error
     res.json({
       companyName: 'HighLevel',
       logoUrl: null,
