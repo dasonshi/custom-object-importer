@@ -997,6 +997,7 @@ const listSchemas = await axios.get(`${API_BASE}/objects/`, {
     }
 
 // Create missing schemas
+    const created = [];
     for (const row of objects) {
       // Generate object key from name if not provided
       const objectKey = row.object_key ? 
@@ -1033,7 +1034,7 @@ const payload = {
         },
         locationId
       };
-      
+
       const token = await withAccessToken(locationId);
       const createResp = await axios.post(`${API_BASE}/objects/`, payload, {
         headers: { 
@@ -1766,13 +1767,15 @@ app.get('/templates/objects', (req, res) => {
     'name',                    // singular label (e.g., "Product")
     'plural',                  // plural label (e.g., "Products")
     'description',             // optional description
-    'primary_field_name'       // display name (e.g., "Product Name")
+    'primary_field_name',      // display name (e.g., "Product Name")
+    'primary_field_type'       // data type (TEXT or NUMERICAL)
   ];
   const example = [
     'Product',
     'Products',
     'Physical products for sale',
-    'Product Name'
+    'Product Name',
+    'TEXT'
   ];
   const csv = [headers.join(','), example.join(',')].join('\n');
 
