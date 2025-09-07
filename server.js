@@ -996,12 +996,15 @@ const listSchemas = await axios.get(`${API_BASE}/objects/`, {
       if (sch?.key && sch?.id) schemaIdByKey[sch.key] = sch.id;
     }
 
-    // Create missing schemas
-    const created = [];
+// Create missing schemas
     for (const row of objects) {
-      const objectKey = String(row.object_key).trim();
-      if (!objectKey) {
-        console.warn('Skipping object row without object_key:', row);
+      // Generate object key from name if not provided
+      const objectKey = row.object_key ? 
+        String(row.object_key).trim() : 
+        String(row.name || '').trim().toLowerCase().replace(/\s+/g, '_');
+      
+      if (!objectKey || !row.name) {
+        console.warn('Skipping object row without name:', row);
         continue;
       }
       
@@ -1010,36 +1013,34 @@ const listSchemas = await axios.get(`${API_BASE}/objects/`, {
         continue;
       }
 
-      const singular = String(row.name || row.display_label || objectKey).trim();
+      const singular = String(row.name).trim();
       const plural = String(row.plural || `${singular}s`).trim();
-      const fqObjectKey = objectKey.startsWith('custom_objects.')
-        ? objectKey
-        : `custom_objects.${objectKey}`;
+      const fqObjectKey = `custom_objects.${objectKey}`;
 
-      const primaryKey = String(row.primary_display_field || 'name').trim();
-      const fqPrimaryKey = primaryKey.startsWith(`custom_objects.${objectKey}.`)
-        ? primaryKey
-        : `custom_objects.${objectKey}.${primaryKey}`;
+      // Use primary_field_name from CSV, default to 'Name' if not provided
+      const primaryFieldName = String(row.primary_field_name || 'Name').trim();
+      const primaryKey = primaryFieldName.toLowerCase().replace(/\s+/g, '_');
+      const fqPrimaryKey = `custom_objects.${objectKey}.${primaryKey}`;
 
-      const payload = {
+const payload = {
         labels: { singular, plural },
         key: fqObjectKey,
         description: row.description || '',
         primaryDisplayPropertyDetails: {
           key: fqPrimaryKey,
-          name: String(row.primary_display_label || 'Name'),
-          dataType: 'TEXT'
+          name: primaryFieldName,
+          dataType: row.primary_field_type || 'TEXT'  // Allow TEXT or NUMERICAL
         },
         locationId
       };
-
-const token = await withAccessToken(locationId);
-const createResp = await axios.post(`${API_BASE}/objects/`, payload, {
-  headers: { 
-    Authorization: `Bearer ${token}`,
-    Version: '2021-07-28'
-  }
-});
+      
+      const token = await withAccessToken(locationId);
+      const createResp = await axios.post(`${API_BASE}/objects/`, payload, {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        }
+      });
       const createdId = createResp.data?.id || createResp.data?.data?.id || createResp.data?.object?.id;
       
       if (createdId) {
@@ -1762,15 +1763,18 @@ const response = await axios.get(`${API_BASE}/locations/${locationId}/customValu
 // Objects template: /templates/objects  → objects-template.csv
 app.get('/templates/objects', (req, res) => {
   const headers = [
-    'object_key',              // e.g., products
-    'name',                    // singular label
-    'plural',                  // plural label
-    'description',             // optional
-    'primary_display_field',   // e.g., name
-    'primary_display_label'    // e.g., Name
+    'name',                    // singular label (e.g., "Product")
+    'plural',                  // plural label (e.g., "Products")
+    'description',             // optional description
+    'primary_field_name'       // display name (e.g., "Product Name")
   ];
-  const emptyRow = new Array(headers.length).fill('');
-  const csv = [headers.join(','), emptyRow.join(',')].join('\n');
+  const example = [
+    'Product',
+    'Products',
+    'Physical products for sale',
+    'Product Name'
+  ];
+  const csv = [headers.join(','), example.join(',')].join('\n');
 
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/csv');
