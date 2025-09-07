@@ -1147,12 +1147,16 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
         };
 
 // Only add parentId if provided and not empty
-        const folderId = row.existing_folder_id || row.folder_id || row.parent_id;
-        // Only add to payload if it has actual content (not empty string)
-        if (folderId && folderId.trim() !== '') {
-          fieldPayload.parentId = folderId.trim();
-        }
+        const folderId = row.existing_folder_id || row.folder_id || row.parent_id || null;
         
+        // Very explicit check - only add if we have a non-empty string
+        if (folderId && typeof folderId === 'string' && folderId.trim().length > 0) {
+          const trimmedId = folderId.trim();
+          if (trimmedId !== '') {  // Double-check after trimming
+            fieldPayload.parentId = trimmedId;
+          }
+        }
+        // If folderId is empty/null/undefined, we don't add parentId at all        
         // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
           fieldPayload.options = options.map(opt => {
