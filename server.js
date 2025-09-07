@@ -553,10 +553,19 @@ async function withAccessToken(locationId) {
 if (Date.now() > (install.expires_at ?? 0) - 30_000) {
     console.log(`Token expired for ${locationId}, attempting refresh...`);
     try {
-            const refreshed = await ghl.oauth.refreshAccessToken({
-        refreshToken: install.refresh_token
+const refreshBody = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: install.refresh_token,
+        client_id: process.env.GHL_CLIENT_ID,
+        client_secret: process.env.GHL_CLIENT_SECRET
       });
       
+      const refreshResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', refreshBody, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+      
+      const refreshed = refreshResponse.data;
+        
       const updatedInstall = {
         access_token: refreshed.access_token,
         refresh_token: refreshed.refresh_token || install.refresh_token,
