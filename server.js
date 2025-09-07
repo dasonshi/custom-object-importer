@@ -1146,16 +1146,13 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
           objectKey: apiObjectKey
         };
 
-        // Only add parentId if it's provided and not empty
 // Only add parentId/folder_id if it's provided and not empty
 // Support both 'parent_id' and 'folder_id' column names
-// Only add parentId/folder_id if it's provided and not empty
-// Support both 'parent_id' and 'folder_id' column names
-const folderId = row.existing_folder_id || row.folder_id || row.parent_id;// Check for actual content, not just existence
+const folderId = row.existing_folder_id || row.folder_id || row.parent_id;
+// Check for actual content, not just existence
 if (folderId && typeof folderId === 'string' && folderId.trim().length > 0) {
   fieldPayload.parentId = folderId.trim();
 }
-
 // Do NOT add parentId at all if it's empty - the API doesn't want empty strings        // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
           fieldPayload.options = options.map(opt => {
@@ -1173,21 +1170,21 @@ if (folderId && typeof folderId === 'string' && folderId.trim().length > 0) {
           });
         }
 
-        // Add file upload specific attributes
+// Add file upload specific attributes
         if (dataType === 'FILE_UPLOAD') {
-if (row.accepted_formats && row.accepted_formats.trim() !== '') {
-  // Clean up formats - ensure they start with a dot
-  const formats = row.accepted_formats.split(',')
-    .map(f => f.trim())
-    .filter(f => f !== '') // Remove empty strings
-    .map(f => f.startsWith('.') ? f : `.${f}`)
-    .join(',');
-  
-  if (formats) {
-    fieldPayload.acceptedFormats = formats;
-  }
-}
-          if (row.max_file_limit) {
+          if (row.accepted_formats && row.accepted_formats.trim() !== '') {
+            // Clean up formats - ensure they start with a dot
+            const formats = row.accepted_formats.split(',')
+              .map(f => f.trim())
+              .filter(f => f !== '') // Remove empty strings
+              .map(f => f.startsWith('.') ? f : `.${f}`);
+            
+            // acceptedFormats should be an array, not a string
+            if (formats.length > 0) {
+              fieldPayload.acceptedFormats = formats;
+            }
+          }
+                    if (row.max_file_limit) {
             fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
           }
         }
