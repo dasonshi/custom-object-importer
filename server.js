@@ -1146,14 +1146,14 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
           objectKey: apiObjectKey
         };
 
-// Only add parentId/folder_id if it's provided and not empty
-// Support both 'parent_id' and 'folder_id' column names
-const folderId = row.existing_folder_id || row.folder_id || row.parent_id;
-// Check for actual content, not just existence
-if (folderId && typeof folderId === 'string' && folderId.trim().length > 0) {
-  fieldPayload.parentId = folderId.trim();
-}
-// Do NOT add parentId at all if it's empty - the API doesn't want empty strings        // Add options for relevant field types
+// Only add parentId if provided and not empty
+        const folderId = row.existing_folder_id || row.folder_id || row.parent_id;
+        // Only add to payload if it has actual content (not empty string)
+        if (folderId && folderId.trim() !== '') {
+          fieldPayload.parentId = folderId.trim();
+        }
+        
+        // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
           fieldPayload.options = options.map(opt => {
             if (typeof opt === 'string') {
@@ -1184,7 +1184,7 @@ if (folderId && typeof folderId === 'string' && folderId.trim().length > 0) {
               fieldPayload.acceptedFormats = formats;
             }
           }
-                    if (row.max_file_limit) {
+                              if (row.max_file_limit) {
             fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
           }
         }
