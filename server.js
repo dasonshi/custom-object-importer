@@ -1682,14 +1682,13 @@ app.get('/api/objects/:objectKey/fields', requireAuth, handleLocationOverride, a
     
     
 const token = await withAccessToken(locationId);
-const response = await axios.get(`${API_BASE}/custom-fields/`, {
+const response = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
   headers: { 
     Authorization: `Bearer ${token}`,
     Version: '2021-07-28'
   },
   params: { 
-    locationId,
-    objectKey: apiObjectKey 
+    locationId
   }
 });
 
@@ -1702,10 +1701,16 @@ const response = await axios.get(`${API_BASE}/custom-fields/`, {
     const folders = {};
     for (const parentId of parentIds) {
       try {
-        const folderResponse = await axios.get(
-          `${API_BASE}/custom-fields/${parentId}`,
-          { headers }
-        );
+const folderToken = await withAccessToken(locationId);
+const folderResponse = await axios.get(
+  `${API_BASE}/custom-fields/${parentId}`,
+  { 
+    headers: {
+      Authorization: `Bearer ${folderToken}`,
+      Version: '2021-07-28'
+    }
+  }
+);
         folders[parentId] = {
           id: parentId,
           name: folderResponse.data?.name || folderResponse.data?.data?.name || `Folder ${parentId}`,
@@ -1853,14 +1858,13 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
     const apiObjectKey = `custom_objects.${cleanKey}`;
 
 const token = await withAccessToken(locationId);
-const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/`, {
+const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
   headers: { 
     Authorization: `Bearer ${token}`,
     Version: '2021-07-28'
   },
   params: {
-    locationId,
-    objectKey: apiObjectKey 
+    locationId
   }
 });
 
