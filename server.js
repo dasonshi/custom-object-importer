@@ -1858,7 +1858,8 @@ app.get('/templates/fields/:objectKey', (req, res) => {
     'options',              // Options for select/radio fields
     'accepted_formats',     // Accepted file formats
     'max_file_limit',       // Max files
-    'allow_custom_option'   // Allow custom values?
+    'allow_custom_option',   // Allow custom values?
+    'folder_id'
   ];
 
   // Multiple example rows with realistic data
