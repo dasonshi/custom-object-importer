@@ -72,11 +72,7 @@ app.get('/oauth/install', (req, res) => {
   res.redirect(url);
 });
 
-console.log('Environment check:', { 
-  CLIENT_ID: process.env.GHL_CLIENT_ID, 
-  REDIRECT_URI: process.env.GHL_REDIRECT_URI,
-  HAS_SECRET: !!process.env.GHL_CLIENT_SECRET 
-});
+
 const upload = multer({ dest: '/tmp' });
 const REQUIRED_ENV = ['GHL_CLIENT_ID', 'GHL_CLIENT_SECRET', 'GHL_REDIRECT_URI'];
 REQUIRED_ENV.forEach(v => {
@@ -554,9 +550,10 @@ async function withAccessToken(locationId) {
   ghl.setAccessToken(install.access_token, locationId);
   
   // Check if token needs refresh
-  if (Date.now() > (install.expires_at ?? 0) - 30_000) {
+if (Date.now() > (install.expires_at ?? 0) - 30_000) {
+    console.log(`Token expired for ${locationId}, attempting refresh...`);
     try {
-      const refreshed = await ghl.oauth.refreshAccessToken({
+            const refreshed = await ghl.oauth.refreshAccessToken({
         refreshToken: install.refresh_token
       });
       
@@ -566,12 +563,13 @@ async function withAccessToken(locationId) {
         expires_at: Date.now() + ((refreshed.expires_in ?? 3600) * 1000) - 60_000
       };
       
-      await installs.set(locationId, updatedInstall);
-      ghl.setAccessToken(refreshed.access_token, locationId);
+await installs.set(locationId, updatedInstall);
+      console.log(`Token refreshed successfully for ${locationId}`);
+            ghl.setAccessToken(refreshed.access_token, locationId);
       
       return refreshed.access_token;
     } catch (e) {
-      console.error('Token refresh failed:', e.message);
+console.error(`Token refresh failed for ${locationId}:`, e?.response?.data || e.message);
       throw new Error('Failed to refresh access token');
     }
   }
@@ -661,10 +659,6 @@ const locationId = req.locationId; // Use authenticated location
     const objects = objPath ? await parseCSV(objPath) : [];
     const schemaIdByKey = {};
 
-    console.log('Attempting to list schemas with:', {
-      url: `${API_BASE}/objects/`,
-      params: { locationId }
-    });
 
 let existing = [];
 try {
@@ -1670,7 +1664,6 @@ app.get('/api/objects/:objectKey/fields', requireAuth, handleLocationOverride, a
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
     const apiObjectKey = `custom_objects.${cleanKey}`;
     
-    console.log(`Fields request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
     
 const token = await withAccessToken(locationId);
 const response = await axios.get(`${API_BASE}/custom-fields/`, {
@@ -1726,10 +1719,6 @@ const response = await axios.get(`${API_BASE}/custom-fields/`, {
 });
 // Get custom values for location
 app.get('/api/custom-values', requireAuth, handleLocationOverride, async (req, res) => {
-  console.log('=== CUSTOM VALUES REQUEST ===');
-  console.log('Query locationId:', req.query.locationId);
-  console.log('Final locationId being used:', req.locationId);
-  console.log('==============================');
 
   const locationId = req.locationId;
   
@@ -1841,8 +1830,6 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
   try {
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
     const apiObjectKey = `custom_objects.${cleanKey}`;
-
-    console.log(`Template request: original="${objectKey}" -> cleaned="${cleanKey}" -> api="${apiObjectKey}"`);
 
 const token = await withAccessToken(locationId);
 const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/`, {
