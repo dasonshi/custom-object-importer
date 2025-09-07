@@ -59,6 +59,7 @@ app.get('/oauth/install', (req, res) => {
     'locations/customValues.readonly',
     'locations/customValues.write',
     'locations.readonly',
+    'marketplace-installer-details.readonly',
 
   ].join(' ');
 
