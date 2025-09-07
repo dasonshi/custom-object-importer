@@ -1146,6 +1146,12 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
           objectKey: apiObjectKey
         };
 
+        // Only add parentId if it's provided and not empty
+        if (row.parent_id && row.parent_id.trim() !== '') {
+        fieldPayload.parentId = row.parent_id.trim();
+        }
+
+
         // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
           fieldPayload.options = options.map(opt => {
@@ -1165,14 +1171,18 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
 
         // Add file upload specific attributes
         if (dataType === 'FILE_UPLOAD') {
-          if (row.accepted_formats) {
-            // Clean up formats - ensure they start with a dot
-            const formats = row.accepted_formats.split(',')
-              .map(f => f.trim())
-              .map(f => f.startsWith('.') ? f : `.${f}`)
-              .join(',');
-            fieldPayload.acceptedFormats = formats;
-          }
+if (row.accepted_formats && row.accepted_formats.trim() !== '') {
+  // Clean up formats - ensure they start with a dot
+  const formats = row.accepted_formats.split(',')
+    .map(f => f.trim())
+    .filter(f => f !== '') // Remove empty strings
+    .map(f => f.startsWith('.') ? f : `.${f}`)
+    .join(',');
+  
+  if (formats) {
+    fieldPayload.acceptedFormats = formats;
+  }
+}
           if (row.max_file_limit) {
             fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
           }
@@ -1854,12 +1864,12 @@ app.get('/templates/fields/:objectKey', (req, res) => {
   // Multiple example rows with realistic data
   const examples = [
     ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', ''],
-    ['Price', 'MONETORY', 'Product price in USD', '99.99', 'true', '', '', '', ''],
+    ['Price', 'MONETARY', 'Product price in USD', '99.99', 'true', '', '', '', ''],
     ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', ''],
     ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', ''],
     ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', ''],
     ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', ''],
-    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', '', '', '', ''],
+    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', 'Yes|No', '', '', ''],
     ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', ''],
     ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png,.webp', '5', ''],
     ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', ''],
