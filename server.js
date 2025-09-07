@@ -1147,11 +1147,12 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
         };
 
         // Only add parentId if it's provided and not empty
-        if (row.parent_id && row.parent_id.trim() !== '') {
-        fieldPayload.parentId = row.parent_id.trim();
-        }
-
-
+// Only add parentId/folder_id if it's provided and not empty
+// Support both 'parent_id' and 'folder_id' column names
+const folderId = row.folder_id || row.parent_id;
+if (folderId && folderId.trim() !== '') {
+  fieldPayload.parentId = folderId.trim();
+}
         // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
           fieldPayload.options = options.map(opt => {
@@ -1849,32 +1850,32 @@ app.get('/templates/fields/:objectKey', (req, res) => {
   const { objectKey } = req.params;
   const cleanKey = objectKey.replace(/^custom_objects\./, '');
   
-  const headers = [
-    'name',                 // Field display name
-    'data_type',            // Field type
-    'description',          // Help text
-    'placeholder',          // Input placeholder
-    'show_in_forms',        // Show in forms?
-    'options',              // Options for select/radio fields
-    'accepted_formats',     // Accepted file formats
-    'max_file_limit',       // Max files
-    'allow_custom_option',   // Allow custom values?
-    'folder_id'
-  ];
+const headers = [
+  'name',                 // Field display name
+  'data_type',            // Field type
+  'description',          // Help text
+  'placeholder',          // Input placeholder
+  'show_in_forms',        // Show in forms?
+  'options',              // Options for select/radio fields
+  'accepted_formats',     // Accepted file formats
+  'max_file_limit',       // Max files
+  'allow_custom_option',  // Allow custom values?
+  'existing_folder_id'   // Use existing folder by ID
+];
 
   // Multiple example rows with realistic data
   const examples = [
-    ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', ''],
-    ['Price', 'MONETARY', 'Product price in USD', '99.99', 'true', '', '', '', ''],
-    ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', ''],
-    ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', ''],
-    ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', ''],
-    ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', ''],
-    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', 'Yes|No', '', '', ''],
-    ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', ''],
-    ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png,.webp', '5', ''],
-    ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', ''],
-    ['Support Phone', 'PHONE', 'Customer support number', '(555) 123-4567', 'false', '', '', '', '']
+    ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', '',''],
+    ['Price', 'MONETORY', 'Product price in USD', '99.99', 'true', '', '', '', '',''],
+    ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', '',''],
+    ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', '',''],
+    ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', '',''],
+    ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', '',''],
+    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', 'Yes|No', '', '', '',''],
+    ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', '',''],
+    ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png', '5', '',''],
+    ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', '',''],
+    ['Support Phone', 'PHONE', 'Customer support number', '(555) 123-4567', 'false', '', '', '', '','']
   ];
 
   const csvContent = [
