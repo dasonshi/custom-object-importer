@@ -1065,7 +1065,7 @@ await cleanupTempFiles([req.file.path]);
 
 });
 
-// 2. Import Fields for a Specific Object
+// 2. Import Fields for a Specific Object (simplified CSV format)
 app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fields'), async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
@@ -1075,18 +1075,22 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
   }
 
   try {
-    // Get the schema ID for this object
-const token = await withAccessToken(locationId);
-const listSchemas = await axios.get(`${API_BASE}/objects/`, {
-  headers: { 
-    Authorization: `Bearer ${token}`,
-    Version: '2021-07-28'
-  },
-  params: { locationId }
-});
+    // Clean the object key
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    // Verify the object exists
+    const token = await withAccessToken(locationId);
+    const listSchemas = await axios.get(`${API_BASE}/objects/`, {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        Version: '2021-07-28'
+      },
+      params: { locationId }
+    });
 
-const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
-    const schema = objects.find(obj => obj.key === objectKey || obj.key === `custom_objects.${objectKey}`);
+    const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
+    const schema = objects.find(obj => obj.key === objectKey || obj.key === apiObjectKey);
     
     if (!schema) {
       return res.status(404).json({ error: `Object ${objectKey} not found` });
@@ -1095,91 +1099,131 @@ const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.obje
     const fields = await parseCSV(req.file.path);
     const created = [];
     const errors = [];
+    const skipped = [];
 
     for (const row of fields) {
-      const fieldKey = row.field_key;
-      if (!fieldKey) {
-        console.warn('Skipping field row without field_key:', row);
+      // Generate field key from name
+      const fieldName = row.name;
+      if (!fieldName) {
+        console.warn('Skipping field row without name:', row);
+        skipped.push({ row, reason: 'Missing field name' });
         continue;
       }
 
-      try {
-        const payload = {
-          key: fieldKey,
-          label: row.name || row.display_label || fieldKey,
-          type: row.type || 'text',
-          required: String(row.required).toLowerCase() === 'true',
-          helpText: row.help_text || undefined,
-          defaultValue: row.default_value || undefined,
-          unique: String(row.unique).toLowerCase() === 'true' || undefined
-        };
+      // Generate a clean field key from the name
+      const fieldKey = fieldName.toLowerCase()
+        .replace(/[^a-z0-9\s_-]/g, '') // Remove special chars
+        .replace(/\s+/g, '_')           // Replace spaces with underscores
+        .replace(/_+/g, '_')            // Remove duplicate underscores
+        .replace(/^_|_$/g, '');         // Trim underscores
 
-        if (row.type === 'select' || row.type === 'multiselect') {
+      try {
+        // Parse options if provided
+        let options = null;
+        if (row.options) {
           try { 
-            payload.options = JSON.parse(row.options); 
+            options = JSON.parse(row.options);
+            if (!Array.isArray(options)) {
+              options = String(row.options).split('|').map(s => s.trim()).filter(Boolean);
+            }
           } catch { 
-            payload.options = (row.options || '').split('|').map(s => s.trim()).filter(Boolean); 
+            options = String(row.options).split('|').map(s => s.trim()).filter(Boolean);
           }
         }
 
-const fieldPayload = {
-  locationId: locationId,
-  name: payload.label,
-  description: payload.helpText || row.description || "",
-  placeholder: row.placeholder || "",
-  showInForms: row.show_in_forms !== undefined ? String(row.show_in_forms).toLowerCase() === 'true' : true,
-  dataType: (payload.type || 'TEXT').toUpperCase(),
-  fieldKey: `custom_objects.${row.object_key}.${payload.key}`,
-  objectKey: `custom_objects.${row.object_key}`
-};
+        // Normalize data type
+        const dataType = normalizeDataType(row.data_type || 'TEXT');
 
-// Add optional attributes if provided
-if (row.accepted_formats) {
-  fieldPayload.acceptedFormats = row.accepted_formats;
-}
+        const fieldPayload = {
+          locationId: locationId,
+          name: fieldName,
+          description: row.description || "",
+          placeholder: row.placeholder || "",
+          showInForms: row.show_in_forms !== undefined ? 
+            String(row.show_in_forms).toLowerCase() === 'true' : true,
+          dataType: dataType,
+          fieldKey: `${apiObjectKey}.${fieldKey}`,
+          objectKey: apiObjectKey
+        };
 
-if (row.max_file_limit) {
-  fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
-}
+        // Add options for relevant field types
+        if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
+          fieldPayload.options = options.map(opt => {
+            if (typeof opt === 'string') {
+              return { 
+                key: opt.toLowerCase().replace(/[^a-z0-9]/g, '_'), 
+                label: opt 
+              };
+            }
+            return {
+              key: opt.key || opt.label?.toLowerCase().replace(/[^a-z0-9]/g, '_') || opt,
+              label: opt.label || opt.key || opt,
+              ...(opt.url && { url: opt.url })
+            };
+          });
+        }
 
-if (row.allow_custom_option !== undefined) {
-  fieldPayload.allowCustomOption = String(row.allow_custom_option).toLowerCase() === 'true';
-}
+        // Add file upload specific attributes
+        if (dataType === 'FILE_UPLOAD') {
+          if (row.accepted_formats) {
+            // Clean up formats - ensure they start with a dot
+            const formats = row.accepted_formats.split(',')
+              .map(f => f.trim())
+              .map(f => f.startsWith('.') ? f : `.${f}`)
+              .join(',');
+            fieldPayload.acceptedFormats = formats;
+          }
+          if (row.max_file_limit) {
+            fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
+          }
+        }
 
-if (row.parent_id) {
-  fieldPayload.parentId = row.parent_id;
-}
+        // Add radio specific attribute
+        if (dataType === 'RADIO' && row.allow_custom_option !== undefined) {
+          fieldPayload.allowCustomOption = String(row.allow_custom_option).toLowerCase() === 'true';
+        }
 
-const token = await withAccessToken(locationId);
-const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {
-  headers: { 
-    Authorization: `Bearer ${token}`,
-    Version: '2021-07-28'
-  }
-});
+        const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          }
+        });
+        
         created.push({ 
           fieldKey, 
-          id: createField.data?.id || createField.data?.data?.id,
-          label: payload.label 
+          id: createField.data?.id || createField.data?.data?.id || createField.data?.field?.id,
+          label: fieldName 
         });
       } catch (e) {
-        errors.push({ fieldKey, error: e?.response?.data || e.message });
-        console.error(`Failed to create field ${fieldKey}:`, e?.response?.data || e.message);
+        errors.push({ 
+          fieldName, 
+          error: e?.response?.data?.message || e?.response?.data || e.message 
+        });
+        console.error(`Failed to create field ${fieldName}:`, e?.response?.data || e.message);
       }
     }
 
-await cleanupTempFiles([req.file.path]);
+    await cleanupTempFiles([req.file.path]);
+    
     res.json({
-      success: true,
-      message: `Processed ${fields.length} fields for ${objectKey}`,
-      objectKey,
+      success: errors.length === 0,
+      message: `Processed ${fields.length} fields for ${cleanKey}`,
+      objectKey: cleanKey,
       objectId: schema.id,
       created,
-      errors
+      skipped,
+      errors,
+      summary: {
+        total: fields.length,
+        created: created.length,
+        skipped: skipped.length,
+        failed: errors.length
+      }
     });
 
   } catch (e) {
-  handleAPIError(res, e, 'Fields import');
+    handleAPIError(res, e, 'Fields import');
   }
 });
 // Get object schema by key (proxied to GHL)
@@ -1790,46 +1834,51 @@ app.get('/templates/objects', (req, res) => {
   res.send(csv);
 });
 
-// Fields template: /templates/fields  → fields-template.csv (full header incl. optionals)
-// Fields template: /templates/fields  → fields-template.csv (accurate to /custom-fields)
-app.get('/templates/fields', (req, res) => {
+// Fields template: /templates/fields/:objectKey  → fields-template.csv (simplified, object-specific)
+app.get('/templates/fields/:objectKey', (req, res) => {
+  const { objectKey } = req.params;
+  const cleanKey = objectKey.replace(/^custom_objects\./, '');
+  
   const headers = [
-    'object_key',           // e.g., products
-    'field_key',            // e.g., color
-    'name',                 // e.g., Color
-    'data_type',            // TEXT | LARGE_TEXT | NUMERICAL | PHONE | MONETORY | CHECKBOX | SINGLE_OPTIONS | MULTIPLE_OPTIONS | DATE | TEXTBOX_LIST | FILE_UPLOAD | RADIO | EMAIL
-    'description',          // optional
-    'placeholder',          // optional
-    'show_in_forms',        // true/false
-    'options',              // for *_OPTIONS/RADIO/CHECKBOX/TEXTBOX_LIST: "Red|Blue" OR JSON
-    'accepted_formats',     // for FILE_UPLOAD: ".pdf,.jpg,.png"
-    'max_file_limit',       // for FILE_UPLOAD: 1,2,...
-    'allow_custom_option',  // for RADIO: true/false
-    'parent_id'             // optional folder id
+    'name',                 // Field display name
+    'data_type',            // Field type
+    'description',          // Help text
+    'placeholder',          // Input placeholder
+    'show_in_forms',        // Show in forms?
+    'options',              // Options for select/radio fields
+    'accepted_formats',     // Accepted file formats
+    'max_file_limit',       // Max files
+    'allow_custom_option'   // Allow custom values?
   ];
 
-  // single illustrative row (safe defaults)
-  const example = [
-    'products',
-    'color',
-    'Color',
-    'SINGLE_OPTIONS',
-    '',
-    '',
-    'true',
-    'Red|Blue|Green',
-    '',
-    '',
-    '',
-    ''
+  // Multiple example rows with realistic data
+  const examples = [
+    ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', ''],
+    ['Price', 'MONETORY', 'Product price in USD', '99.99', 'true', '', '', '', ''],
+    ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', ''],
+    ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', ''],
+    ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', ''],
+    ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', ''],
+    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', '', '', '', ''],
+    ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', ''],
+    ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png,.webp', '5', ''],
+    ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', ''],
+    ['Support Phone', 'PHONE', 'Customer support number', '(555) 123-4567', 'false', '', '', '', '']
   ];
 
-  const csv = [headers.join(','), example.join(',')].join('\n');
+  const csvContent = [
+    headers.join(','),
+    ...examples.map(row => row.map(cell => 
+      cell.includes(',') ? `"${cell}"` : cell
+    ).join(','))
+  ].join('\n');
+
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="fields-template.csv"');
-  res.send(csv);
+  res.setHeader('Content-Disposition', `attachment; filename="${cleanKey}-fields-template.csv"`);
+  res.send(csvContent);
 });
+
 // Custom values template: /templates/custom-values → custom-values-template.csv
 app.get('/templates/custom-values', (req, res) => {
   const headers = [
