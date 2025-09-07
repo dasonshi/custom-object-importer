@@ -1611,23 +1611,33 @@ app.get('/api/agency-branding', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   
   try {
-    // Get installer details which includes company info
+    // Use the actual app ID, not the client ID
+    const APP_ID = '68b87115d7dcf1e9cc0c80a0'; // Your actual app ID from HighLevel
+    
     const token = await withAccessToken(locationId);
-const installerDetails = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, {
-  headers: { 
-    Authorization: `Bearer ${token}`,
-    Version: '2021-07-28'
-  }
-});
+    const installerDetails = await axios.get(
+      `${API_BASE}/marketplace/app/${APP_ID}/installations`,
+      {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Version': '2021-07-28',
+          'Accept': 'application/json'
+        }
+      }
+    );
+    
     // Also get location details for additional branding info
-const install = await installs.get(locationId);
-const locationDetails = await axios.get(`${API_BASE}/locations/${locationId}`, {
-  headers: {
-    Authorization: `Bearer ${install.access_token}`,
-    Version: '2021-07-28',
-    Accept: 'application/json'
-  },
-});
+    const install = await installs.get(locationId);
+    const locationDetails = await axios.get(
+      `${API_BASE}/locations/${locationId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${install.access_token}`,
+          'Version': '2021-07-28',
+          'Accept': 'application/json'
+        },
+      }
+    );
 
     const installer = installerDetails.data;
     const location = locationDetails.data;
