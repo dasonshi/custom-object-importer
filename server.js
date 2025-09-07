@@ -1895,6 +1895,13 @@ app.get('/templates/custom-values', (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="custom-values-template.csv"');
   res.send(csv);
 });
+// Keep the old route for backward compatibility, but redirect to object selection
+app.get('/templates/fields', (req, res) => {
+  res.status(400).json({ 
+    error: 'Object key required', 
+    message: 'Please use /templates/fields/:objectKey to get a fields template for a specific object' 
+  });
+});
 
 // Records template (dynamic): /templates/records/:objectKey  → <objectKey>-template.csv
 // NOTE: requires auth because we introspect fields via GHL API
