@@ -1609,7 +1609,8 @@ const r = await axios.get(`${API_BASE}/objects/`, {
 // Agency/Company branding endpoint
 app.get('/api/agency-branding', requireAuth, async (req, res) => {
   const locationId = req.locationId;
-  
+  const APP_ID = process.env.GHL_APP_ID || '68b87115d7dcf1e9cc0c80a0';
+
   try {
     // Use the actual app ID, not the client ID
     const APP_ID = '68b87115d7dcf1e9cc0c80a0'; // Your actual app ID from HighLevel
