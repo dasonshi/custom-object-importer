@@ -1131,14 +1131,14 @@ const fields = await parseCSV(req.file.path);
     
     // If no folder exists, create one
     if (!defaultFolderId) {
-      const folderPayload = {
+const folderPayload = {
         locationId: locationId,
         name: 'General',
         dataType: 'GROUP',
-        fieldKey: `${apiObjectKey}.general`,
+        fieldKey: `${apiObjectKey}.general_folder`,
         objectKey: apiObjectKey
       };
-      
+
       try {
         const folderResp = await axios.post(`${API_BASE}/custom-fields/`, folderPayload, {
           headers: { 
@@ -1260,7 +1260,7 @@ const fields = await parseCSV(req.file.path);
         }
         // Note: If somehow we have no folder at all, the API will error
 
-        
+
         // If folderId is empty/null/undefined, we don't add parentId at all        
         // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
@@ -1318,11 +1318,22 @@ const fields = await parseCSV(req.file.path);
           label: fieldName 
         });
       } catch (e) {
-        errors.push({ 
-          fieldName, 
-          error: e?.response?.data?.message || e?.response?.data || e.message 
-        });
-        console.error(`Failed to create field ${fieldName}:`, e?.response?.data || e.message);
+        const errorMessage = e?.response?.data?.message || e?.response?.data || e.message;
+        
+        // Check if field already exists
+        if (e?.response?.status === 400 && errorMessage?.includes('already exists')) {
+          skipped.push({ 
+            fieldName, 
+            reason: 'Field already exists' 
+          });
+          console.log(`Field ${fieldName} already exists, skipping`);
+        } else {
+          errors.push({ 
+            fieldName, 
+            error: errorMessage
+          });
+          console.error(`Failed to create field ${fieldName}:`, errorMessage);
+        }
       }
     }
 
@@ -2054,26 +2065,86 @@ const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${e
       ? fieldsResponse.data.data.fields
       : [];
 
-    const fieldKeys = fields
+// Build field info with keys and data types
+    const fieldInfo = fields
       .map((field) => {
-        // Prefer extracting from fieldKey (custom_objects.<obj>.<name>)
+        let key = '';
         if (field.fieldKey) {
           const parts = String(field.fieldKey).split('.');
-          return parts[parts.length - 1];
+          key = parts[parts.length - 1];
+        } else {
+          key = String(field.name || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '_') || field.id;
         }
-        // fallback to normalized name
-        const fallback = String(field.name || '')
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '_');
-        return fallback || field.id;
+        
+        return {
+          key,
+          dataType: field.dataType,
+          name: field.name,
+          options: field.options
+        };
       })
-      .filter(Boolean);
+      .filter(f => f.key);
+    
+    const fieldKeys = fieldInfo.map(f => f.key);
+    
+    // Generate sample data based on field types
+    function getSampleData(field) {
+      switch (field.dataType) {
+        case 'TEXT':
+          return `Sample ${field.name}`;
+        case 'LARGE_TEXT':
+          return `This is a sample description for ${field.name}`;
+        case 'NUMERICAL':
+          return '123';
+        case 'PHONE':
+          return '(555) 123-4567';
+        case 'EMAIL':
+          return 'example@email.com';
+        case 'DATE':
+          return new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        case 'MONETORY':
+          return '99.99';
+        case 'CHECKBOX':
+          return field.options?.length > 0 
+            ? field.options[0].label 
+            : 'Yes';
+        case 'SINGLE_OPTIONS':
+        case 'RADIO':
+          return field.options?.length > 0 
+            ? field.options[0].label 
+            : 'Option 1';
+        case 'MULTIPLE_OPTIONS':
+          return field.options?.length > 1 
+            ? `${field.options[0].label}|${field.options[1].label}`
+            : 'Option 1|Option 2';
+        case 'TEXTBOX_LIST':
+          return 'Item 1|Item 2|Item 3';
+        case 'FILE_UPLOAD':
+          return 'https://example.com/file.pdf';
+        default:
+          return `Sample ${field.name}`;
+      }
+    }
+    
+    // Generate the sample row
+    const sampleRow = isUpdateMode 
+      ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f))]
+      : fieldInfo.map(f => getSampleData(f));
 
-    // Include both id and external_id so users can choose update strategy later
-    const headers = ['object_key', 'id', 'external_id', 'owner', 'followers', ...fieldKeys];
-    const emptyRow = [cleanKey, '', '', '', '', ...fieldKeys.map(() => '')];
+// For create mode: no ID field needed (GHL generates it)
+    // For update mode: only need the record ID
+    const isUpdateMode = req.query.mode === 'update';
+    
+    const headers = isUpdateMode 
+      ? ['id', ...fieldKeys]  // Update mode: just ID + fields
+      : fieldKeys;             // Create mode: just fields
+    
+    // Don't include sample data yet - we'll generate it based on field types
+    const emptyRow = headers.map(() => '');
 
-    const csvContent = [headers.join(','), emptyRow.join(',')].join('\n');
+const csvContent = [headers.join(','), sampleRow.join(',')].join('\n');
 
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'text/csv');
