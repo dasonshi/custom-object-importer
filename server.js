@@ -1366,7 +1366,11 @@ const folderPayload = {
 app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
   const locationId = req.locationId;
 const { objectKey } = req.params;
-const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
+const token = await withAccessToken(locationId);
+const headers = { 
+  Authorization: `Bearer ${token}`,
+  Version: '2021-07-28'
+};
 
   if (!req.file) {
     return res.status(400).json({ error: 'Records CSV file is required' });
@@ -1471,12 +1475,38 @@ recordResult = await axios.post(
   { headers }
 );
 }
+const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
+
 created.push({ 
-  externalId: row.external_id, 
-  id: recordResult.data?.id || recordResult.data?.data?.id || recordId,
+  externalId: row.external_id || 'N/A', 
+  id: createdRecordId,
   properties: Object.keys(properties),
   action: action
-});      
+});
+
+// Handle association if provided
+if (row.association_id && row.related_record_id) {
+  try {
+    const associationPayload = {
+      locationId: locationId,
+      associationId: row.association_id.trim(),
+      firstRecordId: row.association_type === 'second' ? row.related_record_id.trim() : createdRecordId,
+      secondRecordId: row.association_type === 'second' ? createdRecordId : row.related_record_id.trim()
+    };
+    
+    await axios.post(`${API_BASE}/associations/relations`, associationPayload, {
+      headers: {
+        Authorization: `Bearer ${await withAccessToken(locationId)}`,
+        Version: '2021-07-28'
+      }
+    });
+    
+    console.log(`Created association between ${createdRecordId} and ${row.related_record_id}`);
+  } catch (assocError) {
+    console.error(`Failed to create association for record ${createdRecordId}:`, assocError?.response?.data || assocError.message);
+    // Don't fail the whole record, just log the association error
+  }
+}
 } catch (e) {
         errors.push({ 
           externalId: row.external_id, 
@@ -2068,7 +2098,7 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
       ? fieldsResponse.data.data.fields
       : [];
 
-    // Build field info with keys and data types
+// Build field info with keys and data types
     const fieldInfo = fields
       .map((field) => {
         let key = '';
@@ -2081,15 +2111,17 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
             .replace(/[^a-z0-9]/g, '_') || field.id;
         }
         
+        // Debug: Check if we have dataType
+        console.log(`Field ${field.name}: dataType=${field.dataType}, key=${key}`);
+        
         return {
           key,
-          dataType: field.dataType,
+          dataType: field.dataType || field.type || 'TEXT', // Fallback to 'type' or 'TEXT'
           name: field.name,
           options: field.options
         };
       })
-      .filter(f => f.key);
-    
+      .filter(f => f.key);    
     const fieldKeys = fieldInfo.map(f => f.key);
     
     // Generate sample data based on field types
@@ -2131,14 +2163,15 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
       }
     }
     
-    // Generate headers and sample row based on mode
+// Generate headers and sample row based on mode
+    // Include optional association columns at the end
     const headers = isUpdateMode 
-      ? ['id', ...fieldKeys]
-      : fieldKeys;
+      ? ['id', ...fieldKeys, 'association_id', 'related_record_id', 'association_type']
+      : [...fieldKeys, 'association_id', 'related_record_id', 'association_type'];
     
     const sampleRow = isUpdateMode 
-      ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f))]
-      : fieldInfo.map(f => getSampleData(f));
+      ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f)), '', '', '']
+      : [...fieldInfo.map(f => getSampleData(f)), '', '', ''];
 
     const csvContent = [
       headers.join(','), 
