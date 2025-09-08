@@ -1366,21 +1366,22 @@ const folderPayload = {
 // FE calls: GET /api/objects/:objectKey/schema?fetchProperties=true[&locationId=...]
 
 // 3. Import Records for a Specific Object
+
+// 3. UPDATED Import Records for a Specific Object (WITHOUT association handling)
 app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
   const locationId = req.locationId;
-const { objectKey } = req.params;
-const token = await withAccessToken(locationId);
-const headers = { 
-  Authorization: `Bearer ${token}`,
-  Version: '2021-07-28'
-};
+  const { objectKey } = req.params;
+  const token = await withAccessToken(locationId);
+  const headers = { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  };
 
   if (!req.file) {
     return res.status(400).json({ error: 'Records CSV file is required' });
   }
 
   try {
-    
     // Get the full object key for API calls
     const fullObjectKey = objectKey.startsWith('custom_objects.') 
       ? objectKey 
@@ -1393,11 +1394,12 @@ const headers = {
     for (const row of records) {
       try {
         const properties = {};
+        const recordId = row.id;
 
-const recordId = row.id;
-
-for (const [k, v] of Object.entries(row)) {
-  if (['object_key', 'id', 'external_id', 'owner', 'followers'].includes(k)) continue;          if (v === '' || v === null || v === undefined) continue;
+        for (const [k, v] of Object.entries(row)) {
+          // Skip system fields and empty values
+          if (['object_key', 'id', 'external_id', 'owner', 'followers'].includes(k)) continue;
+          if (v === '' || v === null || v === undefined) continue;
           
           // Handle different field types per GHL documentation
           if (k.includes('money') || k.includes('currency')) {
@@ -1414,112 +1416,91 @@ for (const [k, v] of Object.entries(row)) {
           }
         }
 
-// Build request body for CREATE (POST)
-const createRequestBody = {
-  locationId: locationId,
-  properties: properties
-};
+        // Build request body for CREATE (POST)
+        const createRequestBody = {
+          locationId: locationId,
+          properties: properties
+        };
 
-if (row.owner) {
-  createRequestBody.owner = row.owner.split(',').map(s => s.trim());
-}
-if (row.followers) {
-  createRequestBody.followers = row.followers.split(',').map(s => s.trim());
-}
+        if (row.owner) {
+          createRequestBody.owner = row.owner.split(',').map(s => s.trim());
+        }
+        if (row.followers) {
+          createRequestBody.followers = row.followers.split(',').map(s => s.trim());
+        }
 
-// Build request body for UPDATE (PUT) - only properties
-const updateRequestBody = {
-  properties: properties
-};
+        // Build request body for UPDATE (PUT) - only properties
+        const updateRequestBody = {
+          properties: properties
+        };
 
-let recordResult;
-let action = 'created';
+        let recordResult;
+        let action = 'created';
 
-if (recordId) {
-  try {
-// First verify the record exists using the exact endpoint format
-await axios.get(
-  `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-  { 
-    headers,
-    params: { locationId }
-  }
-);
+        if (recordId) {
+          try {
+            // First verify the record exists
+            await axios.get(
+              `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+              { 
+                headers,
+                params: { locationId }
+              }
+            );
 
-// Record exists, update it (PUT only wants properties, locationId in query)
-recordResult = await axios.put(
-  `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-  updateRequestBody,
-  { 
-    headers,
-    params: { locationId }
-  }
-);
-    action = 'updated';
-  } catch (getError) {
-    if (getError?.response?.status === 404) {
-      console.log(`Record ID ${recordId} not found, creating new record instead`);
-      // Record doesn't exist, create new one
-recordResult = await axios.post(
-  `${API_BASE}/objects/${fullObjectKey}/records`,
-  createRequestBody,
-  { headers }
-);
-      action = 'created (id not found)';
-    } else {
-      throw getError; // Re-throw other errors
-    }
-  }
-} else {  
-  // Create new record
-recordResult = await axios.post(
-  `${API_BASE}/objects/${fullObjectKey}/records`,
-  createRequestBody,
-  { headers }
-);
-}
-const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
+            // Record exists, update it
+            recordResult = await axios.put(
+              `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+              updateRequestBody,
+              { 
+                headers,
+                params: { locationId }
+              }
+            );
+            action = 'updated';
+          } catch (getError) {
+            if (getError?.response?.status === 404) {
+              console.log(`Record ID ${recordId} not found, creating new record instead`);
+              // Record doesn't exist, create new one
+              recordResult = await axios.post(
+                `${API_BASE}/objects/${fullObjectKey}/records`,
+                createRequestBody,
+                { headers }
+              );
+              action = 'created (id not found)';
+            } else {
+              throw getError;
+            }
+          }
+        } else {  
+          // Create new record
+          recordResult = await axios.post(
+            `${API_BASE}/objects/${fullObjectKey}/records`,
+            createRequestBody,
+            { headers }
+          );
+        }
 
-created.push({ 
-  externalId: row.external_id || 'N/A', 
-  id: createdRecordId,
-  properties: Object.keys(properties),
-  action: action
-});
+        const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
 
-// Handle association if provided
-if (row.association_id && row.related_record_id) {
-  try {
-    const associationPayload = {
-      locationId: locationId,
-      associationId: row.association_id.trim(),
-      firstRecordId: row.association_type === 'second' ? row.related_record_id.trim() : createdRecordId,
-      secondRecordId: row.association_type === 'second' ? createdRecordId : row.related_record_id.trim()
-    };
-    
-    await axios.post(`${API_BASE}/associations/relations`, associationPayload, {
-      headers: {
-        Authorization: `Bearer ${await withAccessToken(locationId)}`,
-        Version: '2021-07-28'
-      }
-    });
-    
-    console.log(`Created association between ${createdRecordId} and ${row.related_record_id}`);
-  } catch (assocError) {
-    console.error(`Failed to create association for record ${createdRecordId}:`, assocError?.response?.data || assocError.message);
-    // Don't fail the whole record, just log the association error
-  }
-}
-} catch (e) {
+        created.push({ 
+          externalId: row.external_id || 'N/A', 
+          id: createdRecordId,
+          properties: Object.keys(properties),
+          action: action
+        });
+
+      } catch (e) {
         errors.push({ 
           externalId: row.external_id, 
           error: e?.response?.data || e.message 
         });
-        console.error(`Failed to create record extId=${row.external_id}:`, e?.response?.data || e.message);
+        console.error(`Failed to process record:`, e?.response?.data || e.message);
       }
     }
 
-await cleanupTempFiles([req.file.path]);
+    await cleanupTempFiles([req.file.path]);
+    
     res.json({
       success: true,
       message: `Processed ${records.length} records for ${objectKey}`,
@@ -1534,77 +1515,162 @@ await cleanupTempFiles([req.file.path]);
     });
 
   } catch (e) {
-   handleAPIError(res, e, 'Records import');
+    handleAPIError(res, e, 'Records import');
   }
 });
-// 4) Import Association TYPES (schema-level)
-app.post('/api/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
+
+// 3. UPDATED Import Records for a Specific Object (WITHOUT association handling)
+app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
   const locationId = req.locationId;
-const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
-  if (!req.file) return res.status(400).json({ error: 'Associations CSV file is required' });
+  const { objectKey } = req.params;
+  const token = await withAccessToken(locationId);
+  const headers = { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  };
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Records CSV file is required' });
+  }
 
   try {
-    const rows = await parseCSV(req.file.path);
+    // Get the full object key for API calls
+    const fullObjectKey = objectKey.startsWith('custom_objects.') 
+      ? objectKey 
+      : `custom_objects.${objectKey}`;
 
+    const records = await parseCSV(req.file.path);
     const created = [];
-    const skipped = [];
-    const errors  = [];
+    const errors = [];
 
-    const ensureKey = (k) => {
-      if (!k) return k;
-      // only prefix custom objects (contacts etc. should be left as-is)
-      return /^custom_objects\./.test(k) ? k : (['contact','opportunity','business'].includes(k) ? k : `custom_objects.${k}`);
-    };
-
-    for (const row of rows) {
+    for (const row of records) {
       try {
-        const key = String(row.association_key || row.key || '').trim();
-        const firstObjectKey  = ensureKey(String(row.first_object_key || '').trim());
-        const firstObjectLabel = String(row.first_object_label || row.first_label || '').trim();
-        const secondObjectKey = ensureKey(String(row.second_object_key || '').trim());
-        const secondObjectLabel = String(row.second_object_label || row.second_label || '').trim();
+        const properties = {};
+        const recordId = row.id;
 
-        if (!key || !firstObjectKey || !firstObjectLabel || !secondObjectKey || !secondObjectLabel) {
-          throw new Error('Missing required fields (key, first_object_key/label, second_object_key/label)');
+        for (const [k, v] of Object.entries(row)) {
+          // Skip system fields and empty values
+          if (['object_key', 'id', 'external_id', 'owner', 'followers'].includes(k)) continue;
+          if (v === '' || v === null || v === undefined) continue;
+          
+          // Handle different field types per GHL documentation
+          if (k.includes('money') || k.includes('currency')) {
+            properties[k] = {
+              currency: "default",
+              value: parseFloat(v) || 0
+            };
+          } else if (k.includes('_multi') || k.includes('_checkbox')) {
+            properties[k] = v.split(',').map(s => s.trim());
+          } else if (k.includes('_files')) {
+            properties[k] = [{ url: v }];
+          } else {
+            properties[k] = v;
+          }
         }
 
-        const payload = {
-          locationId,
-          key,
-          firstObjectLabel,
-          firstObjectKey,
-          secondObjectLabel,
-          secondObjectKey
+        // Build request body for CREATE (POST)
+        const createRequestBody = {
+          locationId: locationId,
+          properties: properties
         };
 
-        // Create association TYPE
-        const r = await axios.post(`${API_BASE}/associations/`, payload, { headers });
-
-        created.push({
-          id: r.data?.id || r.data?.data?.id,
-          key,
-          firstObjectKey,
-          secondObjectKey
-        });
-      } catch (e) {
-        // If API returns “already exists”/duplicate, treat as skip
-        const msg = e?.response?.data || e.message;
-        if (/(exist|duplicate)/i.test(String(msg))) {
-          skipped.push({ row, reason: 'already exists' });
-        } else {
-          errors.push({ row, error: msg });
-          console.error('Association type create error:', msg);
+        if (row.owner) {
+          createRequestBody.owner = row.owner.split(',').map(s => s.trim());
         }
+        if (row.followers) {
+          createRequestBody.followers = row.followers.split(',').map(s => s.trim());
+        }
+
+        // Build request body for UPDATE (PUT) - only properties
+        const updateRequestBody = {
+          properties: properties
+        };
+
+        let recordResult;
+        let action = 'created';
+
+        if (recordId) {
+          try {
+            // First verify the record exists
+            await axios.get(
+              `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+              { 
+                headers,
+                params: { locationId }
+              }
+            );
+
+            // Record exists, update it
+            recordResult = await axios.put(
+              `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+              updateRequestBody,
+              { 
+                headers,
+                params: { locationId }
+              }
+            );
+            action = 'updated';
+          } catch (getError) {
+            if (getError?.response?.status === 404) {
+              console.log(`Record ID ${recordId} not found, creating new record instead`);
+              // Record doesn't exist, create new one
+              recordResult = await axios.post(
+                `${API_BASE}/objects/${fullObjectKey}/records`,
+                createRequestBody,
+                { headers }
+              );
+              action = 'created (id not found)';
+            } else {
+              throw getError;
+            }
+          }
+        } else {  
+          // Create new record
+          recordResult = await axios.post(
+            `${API_BASE}/objects/${fullObjectKey}/records`,
+            createRequestBody,
+            { headers }
+          );
+        }
+
+        const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
+
+        created.push({ 
+          externalId: row.external_id || 'N/A', 
+          id: createdRecordId,
+          properties: Object.keys(properties),
+          action: action
+        });
+
+      } catch (e) {
+        errors.push({ 
+          externalId: row.external_id, 
+          error: e?.response?.data || e.message 
+        });
+        console.error(`Failed to process record:`, e?.response?.data || e.message);
       }
     }
 
-await cleanupTempFiles([req.file.path]);    res.json({ success: errors.length === 0, created, skipped, errors });
+    await cleanupTempFiles([req.file.path]);
+    
+    res.json({
+      success: true,
+      message: `Processed ${records.length} records for ${objectKey}`,
+      objectKey,
+      created,
+      errors,
+      summary: {
+        total: records.length,
+        successful: created.length,
+        failed: errors.length
+      }
+    });
 
   } catch (e) {
-  handleAPIError(res, e, 'Association types import');
+    handleAPIError(res, e, 'Records import');
   }
 });
-// 5) Import Custom Values
+
 app.post('/api/custom-values/import', requireAuth, upload.single('customValues'), async (req, res) => {
   const locationId = req.locationId;
 const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
