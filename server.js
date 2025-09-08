@@ -2627,6 +2627,7 @@ app.get('/api/associations', requireAuth, handleLocationOverride, async (req, re
 });
 
 // Get associations for a specific object
+// Get associations for a specific object using the better endpoint
 app.get('/api/objects/:objectKey/associations', requireAuth, handleLocationOverride, async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
@@ -2636,27 +2637,27 @@ app.get('/api/objects/:objectKey/associations', requireAuth, handleLocationOverr
     const apiObjectKey = `custom_objects.${cleanKey}`;
     
     const token = await withAccessToken(locationId);
-    const response = await axios.get(`${API_BASE}/associations`, {
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        Version: '2021-07-28'
-      },
-      params: { locationId }
-    });
     
-    const allAssociations = response.data?.associations || response.data || [];
-    
-    // Filter associations that involve this object
-    const relevantAssociations = allAssociations.filter(assoc => 
-      assoc.firstObjectKey === apiObjectKey || 
-      assoc.firstObjectKey === objectKey ||
-      assoc.secondObjectKey === apiObjectKey ||
-      assoc.secondObjectKey === objectKey
+    // Use the better endpoint that gets associations for a specific object
+    const response = await axios.get(
+      `${API_BASE}/associations/objectKey/${encodeURIComponent(apiObjectKey)}`,
+      {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        },
+        params: { locationId }
+      }
     );
+    
+    // This endpoint returns associations directly for this object
+    const associations = Array.isArray(response.data) 
+      ? response.data 
+      : response.data?.associations || [];
     
     res.json({
       objectKey: cleanKey,
-      associations: relevantAssociations.map(assoc => ({
+      associations: associations.map(assoc => ({
         id: assoc.id,
         key: assoc.key,
         firstObjectKey: assoc.firstObjectKey,
@@ -2667,18 +2668,20 @@ app.get('/api/objects/:objectKey/associations', requireAuth, handleLocationOverr
           ? assoc.secondObjectKey
           : assoc.firstObjectKey,
         description: `${assoc.firstObjectLabel} → ${assoc.secondObjectLabel}`,
-        isFirst: assoc.firstObjectKey === apiObjectKey || assoc.firstObjectKey === objectKey
+        isFirst: assoc.firstObjectKey === apiObjectKey || assoc.firstObjectKey === objectKey,
+        associationType: assoc.associationType
       }))
     });
   } catch (e) {
     if (e?.response?.status === 404) {
+      const cleanKey = objectKey.replace(/^custom_objects\./, '');
       res.json({ objectKey: cleanKey, associations: [] });
     } else {
+      console.error('Fetch associations error:', e?.response?.data || e.message);
       handleAPIError(res, e, 'Fetch object associations');
     }
   }
-});
-// Graceful shutdown
+});// Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
   await installs.disconnect();
