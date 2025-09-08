@@ -60,6 +60,9 @@ app.get('/oauth/install', (req, res) => {
     'locations/customValues.write',
     'locations.readonly',
     'marketplace-installer-details.readonly',
+    'associations.readonly',
+    'associations/relation.readonly',
+    'associations/relation.write'
 
   ].join(' ');
 
@@ -2587,7 +2590,94 @@ const r = await axios.get(`${API_BASE}/objects/${apiObjectKey}`, {
     res.status(e?.response?.status || 500).json(e?.response?.data || { error: 'schema_fetch_failed' });
   }
 });
+// Get all association types for a location
+app.get('/api/associations', requireAuth, handleLocationOverride, async (req, res) => {
+  const locationId = req.locationId;
+  
+  try {
+    const token = await withAccessToken(locationId);
+    const response = await axios.get(`${API_BASE}/associations`, {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        Version: '2021-07-28'
+      },
+      params: { locationId }
+    });
+    
+    const associations = response.data?.associations || response.data || [];
+    
+    res.json({
+      associations: associations.map(assoc => ({
+        id: assoc.id,
+        key: assoc.key,
+        firstObjectKey: assoc.firstObjectKey,
+        firstObjectLabel: assoc.firstObjectLabel,
+        secondObjectKey: assoc.secondObjectKey,
+        secondObjectLabel: assoc.secondObjectLabel,
+        description: `${assoc.firstObjectLabel} → ${assoc.secondObjectLabel}`
+      }))
+    });
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      res.json({ associations: [] });
+    } else {
+      handleAPIError(res, e, 'Fetch associations');
+    }
+  }
+});
 
+// Get associations for a specific object
+app.get('/api/objects/:objectKey/associations', requireAuth, handleLocationOverride, async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  try {
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    const token = await withAccessToken(locationId);
+    const response = await axios.get(`${API_BASE}/associations`, {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        Version: '2021-07-28'
+      },
+      params: { locationId }
+    });
+    
+    const allAssociations = response.data?.associations || response.data || [];
+    
+    // Filter associations that involve this object
+    const relevantAssociations = allAssociations.filter(assoc => 
+      assoc.firstObjectKey === apiObjectKey || 
+      assoc.firstObjectKey === objectKey ||
+      assoc.secondObjectKey === apiObjectKey ||
+      assoc.secondObjectKey === objectKey
+    );
+    
+    res.json({
+      objectKey: cleanKey,
+      associations: relevantAssociations.map(assoc => ({
+        id: assoc.id,
+        key: assoc.key,
+        firstObjectKey: assoc.firstObjectKey,
+        firstObjectLabel: assoc.firstObjectLabel,
+        secondObjectKey: assoc.secondObjectKey,
+        secondObjectLabel: assoc.secondObjectLabel,
+        relationTo: assoc.firstObjectKey === apiObjectKey || assoc.firstObjectKey === objectKey
+          ? assoc.secondObjectKey
+          : assoc.firstObjectKey,
+        description: `${assoc.firstObjectLabel} → ${assoc.secondObjectLabel}`,
+        isFirst: assoc.firstObjectKey === apiObjectKey || assoc.firstObjectKey === objectKey
+      }))
+    });
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      res.json({ objectKey: cleanKey, associations: [] });
+    } else {
+      handleAPIError(res, e, 'Fetch object associations');
+    }
+  }
+});
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
