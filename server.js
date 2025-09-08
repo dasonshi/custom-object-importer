@@ -1366,8 +1366,6 @@ const folderPayload = {
 // FE calls: GET /api/objects/:objectKey/schema?fetchProperties=true[&locationId=...]
 
 // 3. Import Records for a Specific Object
-
-// 3. UPDATED Import Records for a Specific Object (WITHOUT association handling)
 app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
@@ -1517,160 +1515,74 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
   } catch (e) {
     handleAPIError(res, e, 'Records import');
   }
-});
-
-// 3. UPDATED Import Records for a Specific Object (WITHOUT association handling)
-app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
+});// 4) Import Association TYPES (schema-level)
+app.post('/api/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
   const locationId = req.locationId;
-  const { objectKey } = req.params;
-  const token = await withAccessToken(locationId);
-  const headers = { 
-    Authorization: `Bearer ${token}`,
-    Version: '2021-07-28'
-  };
-
-  if (!req.file) {
-    return res.status(400).json({ error: 'Records CSV file is required' });
-  }
+const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
+  if (!req.file) return res.status(400).json({ error: 'Associations CSV file is required' });
 
   try {
-    // Get the full object key for API calls
-    const fullObjectKey = objectKey.startsWith('custom_objects.') 
-      ? objectKey 
-      : `custom_objects.${objectKey}`;
+    const rows = await parseCSV(req.file.path);
 
-    const records = await parseCSV(req.file.path);
     const created = [];
-    const errors = [];
+    const skipped = [];
+    const errors  = [];
 
-    for (const row of records) {
+    const ensureKey = (k) => {
+      if (!k) return k;
+      // only prefix custom objects (contacts etc. should be left as-is)
+      return /^custom_objects\./.test(k) ? k : (['contact','opportunity','business'].includes(k) ? k : `custom_objects.${k}`);
+    };
+
+    for (const row of rows) {
       try {
-        const properties = {};
-        const recordId = row.id;
+        const key = String(row.association_key || row.key || '').trim();
+        const firstObjectKey  = ensureKey(String(row.first_object_key || '').trim());
+        const firstObjectLabel = String(row.first_object_label || row.first_label || '').trim();
+        const secondObjectKey = ensureKey(String(row.second_object_key || '').trim());
+        const secondObjectLabel = String(row.second_object_label || row.second_label || '').trim();
 
-        for (const [k, v] of Object.entries(row)) {
-          // Skip system fields and empty values
-          if (['object_key', 'id', 'external_id', 'owner', 'followers'].includes(k)) continue;
-          if (v === '' || v === null || v === undefined) continue;
-          
-          // Handle different field types per GHL documentation
-          if (k.includes('money') || k.includes('currency')) {
-            properties[k] = {
-              currency: "default",
-              value: parseFloat(v) || 0
-            };
-          } else if (k.includes('_multi') || k.includes('_checkbox')) {
-            properties[k] = v.split(',').map(s => s.trim());
-          } else if (k.includes('_files')) {
-            properties[k] = [{ url: v }];
-          } else {
-            properties[k] = v;
-          }
+        if (!key || !firstObjectKey || !firstObjectLabel || !secondObjectKey || !secondObjectLabel) {
+          throw new Error('Missing required fields (key, first_object_key/label, second_object_key/label)');
         }
 
-        // Build request body for CREATE (POST)
-        const createRequestBody = {
-          locationId: locationId,
-          properties: properties
+        const payload = {
+          locationId,
+          key,
+          firstObjectLabel,
+          firstObjectKey,
+          secondObjectLabel,
+          secondObjectKey
         };
 
-        if (row.owner) {
-          createRequestBody.owner = row.owner.split(',').map(s => s.trim());
-        }
-        if (row.followers) {
-          createRequestBody.followers = row.followers.split(',').map(s => s.trim());
-        }
+        // Create association TYPE
+        const r = await axios.post(`${API_BASE}/associations/`, payload, { headers });
 
-        // Build request body for UPDATE (PUT) - only properties
-        const updateRequestBody = {
-          properties: properties
-        };
-
-        let recordResult;
-        let action = 'created';
-
-        if (recordId) {
-          try {
-            // First verify the record exists
-            await axios.get(
-              `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-              { 
-                headers,
-                params: { locationId }
-              }
-            );
-
-            // Record exists, update it
-            recordResult = await axios.put(
-              `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-              updateRequestBody,
-              { 
-                headers,
-                params: { locationId }
-              }
-            );
-            action = 'updated';
-          } catch (getError) {
-            if (getError?.response?.status === 404) {
-              console.log(`Record ID ${recordId} not found, creating new record instead`);
-              // Record doesn't exist, create new one
-              recordResult = await axios.post(
-                `${API_BASE}/objects/${fullObjectKey}/records`,
-                createRequestBody,
-                { headers }
-              );
-              action = 'created (id not found)';
-            } else {
-              throw getError;
-            }
-          }
-        } else {  
-          // Create new record
-          recordResult = await axios.post(
-            `${API_BASE}/objects/${fullObjectKey}/records`,
-            createRequestBody,
-            { headers }
-          );
-        }
-
-        const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
-
-        created.push({ 
-          externalId: row.external_id || 'N/A', 
-          id: createdRecordId,
-          properties: Object.keys(properties),
-          action: action
+        created.push({
+          id: r.data?.id || r.data?.data?.id,
+          key,
+          firstObjectKey,
+          secondObjectKey
         });
-
       } catch (e) {
-        errors.push({ 
-          externalId: row.external_id, 
-          error: e?.response?.data || e.message 
-        });
-        console.error(`Failed to process record:`, e?.response?.data || e.message);
+        // If API returns “already exists”/duplicate, treat as skip
+        const msg = e?.response?.data || e.message;
+        if (/(exist|duplicate)/i.test(String(msg))) {
+          skipped.push({ row, reason: 'already exists' });
+        } else {
+          errors.push({ row, error: msg });
+          console.error('Association type create error:', msg);
+        }
       }
     }
 
-    await cleanupTempFiles([req.file.path]);
-    
-    res.json({
-      success: true,
-      message: `Processed ${records.length} records for ${objectKey}`,
-      objectKey,
-      created,
-      errors,
-      summary: {
-        total: records.length,
-        successful: created.length,
-        failed: errors.length
-      }
-    });
+await cleanupTempFiles([req.file.path]);    res.json({ success: errors.length === 0, created, skipped, errors });
 
   } catch (e) {
-    handleAPIError(res, e, 'Records import');
+  handleAPIError(res, e, 'Association types import');
   }
 });
-
+// 5) Import Custom Values
 app.post('/api/custom-values/import', requireAuth, upload.single('customValues'), async (req, res) => {
   const locationId = req.locationId;
 const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
@@ -1753,7 +1665,114 @@ await cleanupTempFiles([req.file.path]);
  handleAPIError(res, e, 'Custom values import');
   }
 });
+// 6. Import Relations (record-to-record links within associations)
+app.post('/api/associations/relations/import', requireAuth, upload.single('relations'), async (req, res) => {
+  const locationId = req.locationId;
+  const token = await withAccessToken(locationId);
+  const headers = { 
+    Authorization: `Bearer ${token}`,
+    Version: '2021-07-28'
+  };
 
+  if (!req.file) {
+    return res.status(400).json({ error: 'Relations CSV file is required' });
+  }
+
+  try {
+    const relations = await parseCSV(req.file.path);
+    const created = [];
+    const errors = [];
+    const skipped = [];
+
+    for (const row of relations) {
+      try {
+        // Required fields
+        const associationId = String(row.association_id || '').trim();
+        const firstRecordId = String(row.first_record_id || '').trim();
+        const secondRecordId = String(row.second_record_id || '').trim();
+
+        if (!associationId || !firstRecordId || !secondRecordId) {
+          throw new Error('Missing required fields (association_id, first_record_id, second_record_id)');
+        }
+
+        // Optional: validate that the association exists first
+        try {
+          await axios.get(
+            `${API_BASE}/associations/${associationId}`,
+            { 
+              headers,
+              params: { locationId }
+            }
+          );
+        } catch (e) {
+          if (e?.response?.status === 404) {
+            throw new Error(`Association ${associationId} not found`);
+          }
+        }
+
+        // Create the relation
+        const payload = {
+          locationId: locationId,
+          associationId: associationId,
+          firstRecordId: firstRecordId,
+          secondRecordId: secondRecordId
+        };
+
+        const result = await axios.post(
+          `${API_BASE}/associations/relations`,
+          payload,
+          { headers }
+        );
+
+        created.push({
+          id: result.data?.id || result.data?.data?.id,
+          associationId,
+          firstRecordId,
+          secondRecordId,
+          description: `${firstRecordId} ↔ ${secondRecordId}`
+        });
+
+      } catch (e) {
+        const msg = e?.response?.data?.message || e?.response?.data || e.message;
+        
+        // Check if relation already exists
+        if (/(exist|duplicate)/i.test(String(msg))) {
+          skipped.push({ 
+            associationId: row.association_id,
+            firstRecordId: row.first_record_id,
+            secondRecordId: row.second_record_id,
+            reason: 'Relation already exists'
+          });
+        } else {
+          errors.push({ 
+            row,
+            error: msg
+          });
+          console.error('Relation create error:', msg);
+        }
+      }
+    }
+
+    await cleanupTempFiles([req.file.path]);
+
+    res.json({
+      success: errors.length === 0,
+      message: `Processed ${relations.length} relations`,
+      created,
+      skipped,
+      errors,
+      summary: {
+        total: relations.length,
+        created: created.length,
+        skipped: skipped.length,
+        failed: errors.length
+      }
+    });
+
+  } catch (e) {
+    handleAPIError(res, e, 'Relations import');
+  }
+});
 // ===== Error Handling =====
 // Basic entry points
 app.get('/', (req, res) => {
@@ -2128,6 +2147,30 @@ app.get('/templates/custom-values', (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="custom-values-template.csv"');
   res.send(csv);
 });
+// Relations template: /templates/relations → relations-template.csv
+app.get('/templates/relations', (req, res) => {
+  const headers = [
+    'association_id',     // Required: ID of the association type
+    'first_record_id',    // Required: ID of the first record
+    'second_record_id'    // Required: ID of the second record
+  ];
+  
+  const examples = [
+    ['assoc_123abc', 'rec_456def', 'rec_789ghi'],
+    ['assoc_123abc', 'rec_111aaa', 'rec_222bbb'],
+    ['assoc_xyz789', 'rec_333ccc', 'rec_444ddd']
+  ];
+  
+  const csvContent = [
+    headers.join(','),
+    ...examples.map(row => row.join(','))
+  ].join('\n');
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="relations-template.csv"');
+  res.send(csvContent);
+});
 // Keep the old route for backward compatibility, but redirect to object selection
 app.get('/templates/fields', (req, res) => {
   res.status(400).json({ 
@@ -2232,15 +2275,15 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
       }
     }
     
-// Generate headers and sample row based on mode
-    // Include optional association columns at the end
+// Generate headers and sample row
+    // NO LONGER include association columns
     const headers = isUpdateMode 
-      ? ['id', ...fieldKeys, 'association_id', 'related_record_id', 'association_type']
-      : [...fieldKeys, 'association_id', 'related_record_id', 'association_type'];
+      ? ['id', ...fieldKeys]
+      : fieldKeys;
     
     const sampleRow = isUpdateMode 
-      ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f)), '', '', '']
-      : [...fieldInfo.map(f => getSampleData(f)), '', '', ''];
+      ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f))]
+      : fieldInfo.map(f => getSampleData(f));
 
     const csvContent = [
       headers.join(','), 
