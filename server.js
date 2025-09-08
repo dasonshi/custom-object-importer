@@ -1198,8 +1198,10 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
           fieldPayload.allowCustomOption = String(row.allow_custom_option).toLowerCase() === 'true';
         }
 
-        const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {
-          headers: { 
+// Debug: log the exact payload being sent
+        console.log(`Creating field ${fieldName}, payload:`, JSON.stringify(fieldPayload, null, 2));
+        
+        const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {          headers: { 
             Authorization: `Bearer ${token}`,
             Version: '2021-07-28'
           }
