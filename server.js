@@ -2046,17 +2046,20 @@ app.get('/templates/records/:objectKey', requireAuth, async (req, res) => {
   try {
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
     const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    // Check mode FIRST, before anything else
+    const isUpdateMode = req.query.mode === 'update';
 
-const token = await withAccessToken(locationId);
-const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
-  headers: { 
-    Authorization: `Bearer ${token}`,
-    Version: '2021-07-28'
-  },
-  params: {
-    locationId
-  }
-});
+    const token = await withAccessToken(locationId);
+    const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        Version: '2021-07-28'
+      },
+      params: {
+        locationId
+      }
+    });
 
     // Depending on API shape: fields under data.fields OR fields
     const fields = Array.isArray(fieldsResponse.data?.fields)
@@ -2065,7 +2068,7 @@ const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${e
       ? fieldsResponse.data.data.fields
       : [];
 
-// Build field info with keys and data types
+    // Build field info with keys and data types
     const fieldInfo = fields
       .map((field) => {
         let key = '';
@@ -2128,29 +2131,28 @@ const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${e
       }
     }
     
-    // Generate the sample row
+    // Generate headers and sample row based on mode
+    const headers = isUpdateMode 
+      ? ['id', ...fieldKeys]
+      : fieldKeys;
+    
     const sampleRow = isUpdateMode 
       ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f))]
       : fieldInfo.map(f => getSampleData(f));
 
-// For create mode: no ID field needed (GHL generates it)
-    // For update mode: only need the record ID
-    const isUpdateMode = req.query.mode === 'update';
-    
-    const headers = isUpdateMode 
-      ? ['id', ...fieldKeys]  // Update mode: just ID + fields
-      : fieldKeys;             // Create mode: just fields
-    
-    // Don't include sample data yet - we'll generate it based on field types
-    const emptyRow = headers.map(() => '');
-
-const csvContent = [headers.join(','), sampleRow.join(',')].join('\n');
+    const csvContent = [
+      headers.join(','), 
+      sampleRow.map(cell => 
+        // Quote cells that contain commas
+        cell.includes(',') || cell.includes('|') ? `"${cell}"` : cell
+      ).join(',')
+    ].join('\n');
 
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${cleanKey}-template.csv"`
+      `attachment; filename="${cleanKey}-${isUpdateMode ? 'update' : 'create'}-template.csv"`
     );
     res.send(csvContent);
   } catch (e) {
@@ -2158,7 +2160,6 @@ const csvContent = [headers.join(','), sampleRow.join(',')].join('\n');
     res.status(500).json({ error: 'Failed to generate records template' });
   }
 });
-
 // -----------------------
 // Backward-compat redirects (keep old links working)
 // -----------------------
