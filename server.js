@@ -1096,11 +1096,115 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
       return res.status(404).json({ error: `Object ${objectKey} not found` });
     }
 
-    const fields = await parseCSV(req.file.path);
+const fields = await parseCSV(req.file.path);
     const created = [];
     const errors = [];
     const skipped = [];
-
+    
+    // Ensure we have a folder for the fields
+    let defaultFolderId = null;
+    
+    try {
+      const existingResp = await axios.get(
+        `${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`,
+        {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          },
+          params: { locationId }
+        }
+      );
+      
+      // The API returns folders separately
+      const folders = existingResp.data?.folders || [];
+      
+      if (folders.length > 0) {
+        defaultFolderId = folders[0].id;
+        console.log(`Using existing folder "${folders[0].name}" (${defaultFolderId})`);
+      }
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        console.log('No fields exist yet for this object');
+      }
+    }
+    
+    // If no folder exists, create one
+    if (!defaultFolderId) {
+      const folderPayload = {
+        locationId: locationId,
+        name: 'General',
+        dataType: 'GROUP',
+        fieldKey: `${apiObjectKey}.general`,
+        objectKey: apiObjectKey
+      };
+      
+      try {
+        const folderResp = await axios.post(`${API_BASE}/custom-fields/`, folderPayload, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          }
+        });
+        
+        defaultFolderId = folderResp.data?.id || folderResp.data?.data?.id;
+        console.log(`Created new folder "General" (${defaultFolderId})`);
+      } catch (e) {
+        console.error('Failed to create default folder:', e?.response?.data || e.message);
+      }
+    }
+    
+    // Check for existing folders/fields to see the structure
+    try {
+      const existingFieldsResp = await axios.get(
+        `${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`,
+        {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          },
+          params: { locationId }
+        }
+      );
+      
+      const existingFields = existingFieldsResp.data?.fields || [];
+      const folders = existingFields.filter(f => f.dataType === 'GROUP');
+      
+      console.log(`Existing folders for ${apiObjectKey}:`, folders);
+      
+      // If no folders exist, we might need to create one
+      if (folders.length === 0) {
+        console.log('No folders found. Creating default folder...');
+        
+        const folderPayload = {
+          locationId: locationId,
+          name: 'General',
+          dataType: 'GROUP',
+          fieldKey: `${apiObjectKey}.general_folder`,
+          objectKey: apiObjectKey
+        };
+        
+        const folderResp = await axios.post(`${API_BASE}/custom-fields/`, folderPayload, {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          }
+        });
+        
+        const defaultFolderId = folderResp.data?.id || folderResp.data?.data?.id;
+        console.log('Created default folder with ID:', defaultFolderId);
+        
+        // Use this folder ID for all fields
+        req.defaultFolderId = defaultFolderId;
+      } else {
+        // Use the first existing folder
+        req.defaultFolderId = folders[0].id;
+        console.log('Using existing folder:', folders[0].name, 'ID:', req.defaultFolderId);
+      }
+    } catch (e) {
+      console.error('Error checking/creating folder:', e?.response?.data || e.message);
+    }
+    
     for (const row of fields) {
       // Generate field key from name
       const fieldName = row.name;
@@ -1146,16 +1250,17 @@ app.post('/api/objects/:objectKey/fields/import', requireAuth, upload.single('fi
           objectKey: apiObjectKey
         };
 
-// Only add parentId if provided and not empty
-        const folderId = row.existing_folder_id || row.folder_id || row.parent_id || null;
+// For custom objects, parentId (folder) is required
+        const providedFolderId = row.existing_folder_id || row.folder_id || row.parent_id || '';
         
-        // Very explicit check - only add if we have a non-empty string
-        if (folderId && typeof folderId === 'string' && folderId.trim().length > 0) {
-          const trimmedId = folderId.trim();
-          if (trimmedId !== '') {  // Double-check after trimming
-            fieldPayload.parentId = trimmedId;
-          }
+        if (providedFolderId && providedFolderId.trim() !== '') {
+          fieldPayload.parentId = providedFolderId.trim();
+        } else if (defaultFolderId) {
+          fieldPayload.parentId = defaultFolderId;
         }
+        // Note: If somehow we have no folder at all, the API will error
+
+        
         // If folderId is empty/null/undefined, we don't add parentId at all        
         // Add options for relevant field types
         if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
