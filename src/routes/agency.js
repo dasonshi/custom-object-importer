@@ -7,7 +7,7 @@ import { API_BASE } from '../services/tokenService.js';
 
 const router = Router();
 
-router.get('/branding', requireAuth, async (req, res) => {
+router.get('/agency-branding', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   
   try {

@@ -186,7 +186,7 @@ if (process.env.NODE_ENV !== 'production') {
   app.use('/api/debug', debugRoutes);
 }
 app.use('/api/objects', objectRoutes);
-app.use('/api/agency', agencyRoutes);
+app.use('/api', agencyRoutes);
 app.use('/api/custom-values', customValuesRoutes);
 app.use('/api/associations', associationsRoutes);
 
