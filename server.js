@@ -1366,6 +1366,7 @@ const folderPayload = {
 // FE calls: GET /api/objects/:objectKey/schema?fetchProperties=true[&locationId=...]
 
 // 3. Import Records for a Specific Object
+// 3. Import Records for a Specific Object
 app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
@@ -1385,6 +1386,27 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
       ? objectKey 
       : `custom_objects.${objectKey}`;
 
+    // FIRST: Fetch field definitions to know their types
+    const fieldsResponse = await axios.get(
+      `${API_BASE}/custom-fields/object-key/${encodeURIComponent(fullObjectKey)}`,
+      {
+        headers,
+        params: { locationId }
+      }
+    );
+
+    const fields = fieldsResponse.data?.fields || [];
+    const fieldTypeMap = {};
+
+    // Build a map of field keys to their data types
+    fields.forEach(field => {
+      if (field.fieldKey) {
+        const parts = field.fieldKey.split('.');
+        const fieldKey = parts[parts.length - 1];
+        fieldTypeMap[fieldKey] = field.dataType;
+      }
+    });
+
     const records = await parseCSV(req.file.path);
     const created = [];
     const errors = [];
@@ -1396,19 +1418,25 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
 
         for (const [k, v] of Object.entries(row)) {
           // Skip system fields and empty values
-          if (['object_key', 'id', 'external_id', 'owner', 'followers'].includes(k)) continue;
+          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'association_id', 'related_record_id', 'association_type'].includes(k)) continue;
           if (v === '' || v === null || v === undefined) continue;
           
-          // Handle different field types per GHL documentation
-          if (k.includes('money') || k.includes('currency')) {
+          // Use the actual field type from schema
+          const fieldType = fieldTypeMap[k];
+          
+          if (fieldType === 'MONETORY') {
             properties[k] = {
               currency: "default",
               value: parseFloat(v) || 0
             };
-          } else if (k.includes('_multi') || k.includes('_checkbox')) {
+          } else if (fieldType === 'MULTIPLE_OPTIONS' || fieldType === 'CHECKBOX') {
             properties[k] = v.split(',').map(s => s.trim());
-          } else if (k.includes('_files')) {
+          } else if (fieldType === 'FILE_UPLOAD') {
             properties[k] = [{ url: v }];
+          } else if (fieldType === 'NUMERICAL') {
+            properties[k] = parseFloat(v) || 0;
+          } else if (fieldType === 'DATE') {
+            properties[k] = v; // Keep as string, GHL expects ISO format
           } else {
             properties[k] = v;
           }
@@ -1515,7 +1543,8 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
   } catch (e) {
     handleAPIError(res, e, 'Records import');
   }
-});// 4) Import Association TYPES (schema-level)
+});
+// 4) Import Association TYPES (schema-level)
 app.post('/api/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
   const locationId = req.locationId;
 const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
