@@ -16,6 +16,7 @@ import { normalizeDataType, parseOptions, asBool } from './src/utils/dataTransfo
 import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup } from './src/utils/crypto.js';
 import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLocationOverride, installs } from './src/middleware/auth.js';
+import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -25,19 +26,17 @@ const ENC_KEY = generateEncryptionKey(process.env.APP_SECRET);
 const require = createRequire(import.meta.url);
 const HighLevelPackage = require('@gohighlevel/api-client');
 const HighLevel = HighLevelPackage.default || HighLevelPackage.HighLevel || HighLevelPackage;
-const ghl = new HighLevel({
+global.ghl = new HighLevel({
   clientId: process.env.GHL_CLIENT_ID,
   clientSecret: process.env.GHL_CLIENT_SECRET
 });
 
-// Guard against SDKs that don’t expose these setters
-if (typeof ghl.setAccessToken !== 'function') {
-  ghl.setAccessToken = function (token) { this._accessToken = token; };
+if (typeof global.ghl.setAccessToken !== 'function') {
+  global.ghl.setAccessToken = function (token) { this._accessToken = token; };
 }
-
 // Polyfill: some SDK builds don’t expose setAccessToken. Prevent runtime crashes.
-if (typeof ghl.setAccessToken !== 'function') {
-  ghl.setAccessToken = function (token/*, locationId */) {
+if (typeof global.ghlsetAccessToken !== 'function') {
+  global.ghlsetAccessToken = function (token/*, locationId */) {
     // no-op: callers expect this to exist; routes using axios attach the header directly
     this._accessToken = token;
   };
@@ -45,7 +44,6 @@ if (typeof ghl.setAccessToken !== 'function') {
 
 
 
-const API_BASE = 'https://services.leadconnectorhq.com';
 const app = express();
 
 // trust Cloudflare/Render proxy so req.secure is true and secure cookies work
@@ -171,12 +169,6 @@ app.use(rateLimit({
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 
-// ===== UTILITY FUNCTIONS =====
-
-async function callGHLAPI(locationId, apiFunction) {
-  await withAccessToken(locationId);
-  return await apiFunction();
-}
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {
@@ -202,32 +194,32 @@ app.get('/health', async (req, res) => {
 app.get('/api/debug/sdk-methods', (req, res) => {
   const methods = {
     ghl_keys: Object.keys(ghl),
-    has_objects: !!ghl.objects,
-    has_customFields: !!ghl.customFields,
-    has_locations: !!ghl.locations,
-    has_oauth: !!ghl.oauth,
-    has_contacts: !!ghl.contacts,
-    has_request: typeof ghl.request === 'function',
-    has_setAccessToken: typeof ghl.setAccessToken === 'function'
+    has_objects: !!global.ghl.objects,
+    has_customFields: !!global.ghl.customFields,
+    has_locations: !!global.ghl.locations,
+    has_oauth: !!global.ghl.oauth,
+    has_contacts: !!global.ghl.contacts,
+    has_request: typeof global.ghl.request === 'function',
+    has_setAccessToken: typeof global.ghl.setAccessToken === 'function'
   };
   
-  if (ghl.objects) {
-    methods.objects_methods = Object.keys(ghl.objects);
+  if (global.ghl.objects) {
+    methods.objects_methods = Object.keys(global.ghl.objects);
   }
-  if (ghl.customFields) {
-    methods.customFields_methods = Object.keys(ghl.customFields);
+  if (global.ghl.customFields) {
+    methods.customFields_methods = Object.keys(global.ghl.customFields);
   }
-  if (ghl.locations) {
-    methods.locations_methods = Object.keys(ghl.locations);
-    if (ghl.locations.customFields) {
-      methods.locations_customFields_methods = Object.keys(ghl.locations.customFields);
+  if (global.ghl.locations) {
+    methods.locations_methods = Object.keys(global.ghl.locations);
+    if (global.ghl.locations.customFields) {
+      methods.locations_customFields_methods = Object.keys(global.ghl.locations.customFields);
     }
-    if (ghl.locations.customValues) {
-      methods.locations_customValues_methods = Object.keys(ghl.locations.customValues);
+    if (global.ghl.locations.customValues) {
+      methods.locations_customValues_methods = Object.keys(global.ghl.locations.customValues);
     }
   }
-  if (ghl.oauth) {
-    methods.oauth_methods = Object.keys(ghl.oauth);
+  if (global.ghl.oauth) {
+    methods.oauth_methods = Object.keys(global.ghl.oauth);
   }
   
   res.json(methods);
@@ -316,7 +308,7 @@ if (typeof state === 'string' && state.length > 0) {
       redirect_uri: process.env.GHL_REDIRECT_URI
     });
 
-const tokenResp = await ghl.oauth.getAccessToken({
+const tokenResp = await global.ghl.oauth.getAccessToken({
   client_id: process.env.GHL_CLIENT_ID,
   client_secret: process.env.GHL_CLIENT_SECRET,
   code: String(code),
@@ -375,50 +367,6 @@ return res.redirect('/launch');
   }
 });
 
-// ===== Helper Functions =====
-async function withAccessToken(locationId) {
-  const install = await installs.get(locationId);
-  if (!install) throw new Error(`No installation found for locationId: ${locationId}`);
-  
-  // Set the access token for this request
-  ghl.setAccessToken(install.access_token, locationId);
-  
-  // Check if token needs refresh
-if (Date.now() > (install.expires_at ?? 0) - 30_000) {
-    console.log(`Token expired for ${locationId}, attempting refresh...`);
-    try {
-const refreshBody = new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: install.refresh_token,
-        client_id: process.env.GHL_CLIENT_ID,
-        client_secret: process.env.GHL_CLIENT_SECRET
-      });
-      
-      const refreshResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', refreshBody, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-      });
-      
-      const refreshed = refreshResponse.data;
-        
-      const updatedInstall = {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token || install.refresh_token,
-        expires_at: Date.now() + ((refreshed.expires_in ?? 3600) * 1000) - 60_000
-      };
-      
-await installs.set(locationId, updatedInstall);
-      console.log(`Token refreshed successfully for ${locationId}`);
-            ghl.setAccessToken(refreshed.access_token, locationId);
-      
-      return refreshed.access_token;
-    } catch (e) {
-console.error(`Token refresh failed for ${locationId}:`, e?.response?.data || e.message);
-      throw new Error('Failed to refresh access token');
-    }
-  }
-  
-  return install.access_token;
-}
 // ===== Import Route =====
 app.post('/import/:locationId', requireAuth, validateTenant, upload.fields([
   { name: 'objects', maxCount: 1 },
