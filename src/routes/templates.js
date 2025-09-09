@@ -54,8 +54,8 @@ router.get('/fields/:objectKey', (req, res) => {
 
 // Custom values template (static - for create mode)
 router.get('/custom-values', (req, res) => {
-  const headers = ['id', 'name', 'value'];
-  const example = ['', 'Custom Field Name', 'Value'];
+  const headers = ['name', 'value'];
+  const example = ['Custom Field Name', 'Value'];
   const csv = [headers.join(','), example.join(',')].join('\n');
   
   res.setHeader('Cache-Control', 'no-store');
