@@ -1424,22 +1424,32 @@ app.post('/api/objects/:objectKey/records/import', requireAuth, upload.single('r
           // Use the actual field type from schema
           const fieldType = fieldTypeMap[k];
           
-          if (fieldType === 'MONETORY') {
-            properties[k] = {
-              currency: "default",
-              value: parseFloat(v) || 0
-            };
-          } else if (fieldType === 'MULTIPLE_OPTIONS' || fieldType === 'CHECKBOX') {
-            properties[k] = v.split(',').map(s => s.trim());
-          } else if (fieldType === 'FILE_UPLOAD') {
-            properties[k] = [{ url: v }];
-          } else if (fieldType === 'NUMERICAL') {
-            properties[k] = parseFloat(v) || 0;
-          } else if (fieldType === 'DATE') {
-            properties[k] = v; // Keep as string, GHL expects ISO format
-          } else {
-            properties[k] = v;
-          }
+if (fieldType === 'MONETORY') {
+  properties[k] = {
+    currency: "default",
+    value: parseFloat(v) || 0
+  };
+} else if (fieldType === 'MULTIPLE_OPTIONS' || fieldType === 'CHECKBOX') {
+  properties[k] = v.split(',').map(s => s.trim());
+} else if (fieldType === 'FILE_UPLOAD') {
+  properties[k] = [{ url: v }];
+} else if (fieldType === 'NUMERICAL') {
+  properties[k] = parseFloat(v) || 0;
+} else if (fieldType === 'DATE') {
+  properties[k] = v; // Keep as string, GHL expects ISO format
+} else if (fieldType === 'PHONE') {
+  // Clean up phone numbers - remove quotes and extra characters
+  let phone = String(v).trim();
+  // Remove surrounding quotes if present
+  phone = phone.replace(/^["']|["']$/g, '');
+  // Ensure it starts with + for international format
+  if (phone && !phone.startsWith('+')) {
+    phone = '+' + phone;
+  }
+  properties[k] = phone;
+} else {
+  properties[k] = v;
+}
         }
 
         // Build request body for CREATE (POST)
