@@ -191,8 +191,8 @@ app.use('/api/custom-values', customValuesRoutes);
 app.use('/api/associations', associationsRoutes);
 
 app.use('/import', importRoutes);
+app.use('/api', appContextRoutes);  // Mount appContext routes first to avoid wildcard conflicts
 app.use('/api', importRoutes);  // For the /api/objects/import style routes
-app.use('/api', appContextRoutes);
 
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
