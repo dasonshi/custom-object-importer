@@ -18,6 +18,8 @@ import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLocationOverride, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
 import authRoutes from './src/routes/auth.js';
+import templateRoutes from './src/routes/templates.js';
+import debugRoutes from './src/routes/debug.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -171,6 +173,13 @@ app.use(rateLimit({
 }));
 // Mount auth routes
 app.use('/api/auth', authRoutes);
+app.use('/templates', templateRoutes);
+
+// Debug routes only in development
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/debug', debugRoutes);
+}
+
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {
