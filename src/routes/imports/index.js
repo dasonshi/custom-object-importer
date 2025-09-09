@@ -838,7 +838,10 @@ router.post('/associations/types/import', requireAuth, upload.single('associatio
 // Import custom values
 router.post('/custom-values/import', requireAuth, upload.single('customValues'), async (req, res) => {
   const locationId = req.locationId;
-  const headers = { Authorization: `Bearer ${await withAccessToken(locationId)}` };
+  const headers = { 
+    Authorization: `Bearer ${await withAccessToken(locationId)}`,
+    Version: '2021-07-28'
+  };
   
   if (!req.file) {
     return res.status(400).json({ error: 'Custom values CSV file is required' });
