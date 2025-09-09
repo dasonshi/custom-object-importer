@@ -133,16 +133,108 @@ res.json({ user, location });
 
 // Switch location
 router.post('/switch-location', express.json(), async (req, res) => {
-  // Copy the handler from server.js
+  try {
+    const { locationId, encryptedData } = req.body;
+    
+    if (!locationId) {
+      return res.status(400).json({ error: 'Location ID required' });
+    }
+    
+    // Verify the new location has the app installed
+    if (!await installs.has(locationId)) {
+      return res.status(422).json({
+        error: 'app_not_installed',
+        message: `App not installed for location ${locationId}`,
+        redirectUrl: '/oauth/install'
+      });
+    }
+    
+    // Decrypt and validate user context if provided
+    if (encryptedData) {
+      try {
+        const decrypted = CryptoJS.AES.decrypt(
+          encryptedData,
+          process.env.GHL_APP_SHARED_SECRET
+        ).toString(CryptoJS.enc.Utf8);
+        const user = JSON.parse(decrypted);
+        
+        // Ensure the user has access to this location
+        if (user.activeLocation !== locationId) {
+          return res.status(403).json({ 
+            error: 'access_denied',
+            message: 'User does not have access to this location' 
+          });
+        }
+      } catch (e) {
+        console.error('User context validation failed:', e.message);
+        return res.status(400).json({ error: 'Invalid user context' });
+      }
+    }
+    
+    // Set the new location cookie
+    setAuthCookie(res, locationId);
+    
+    res.json({ 
+      success: true, 
+      locationId,
+      message: 'Location switched successfully' 
+    });
+    
+  } catch (error) {
+    console.error('Location switch failed:', error.message);
+    res.status(500).json({ error: 'Location switch failed' });
+  }
 });
 
 // Dev routes
 router.get('/dev/mock-encrypted', (req, res) => {
-  // Copy the handler
+  if (process.env.NODE_ENV === 'production') return res.status(404).end();
+
+  // pick a real locationId you've already installed the app on
+  const { companyId = 'AGENCY_123', locationId = process.env.DEV_LOCATION_ID } = req.query;
+
+  const payload = {
+    userId: 'DEVUSER',
+    companyId,
+    role: 'admin',
+    type: locationId ? 'location' : 'agency',
+    ...(locationId ? { activeLocation: locationId } : {}),
+    userName: 'Dev User',
+    email: 'dev@example.com'
+  };
+
+  const ciphertext = CryptoJS.AES.encrypt(
+    JSON.stringify(payload),
+    process.env.GHL_APP_SHARED_SECRET
+  ).toString();
+
+  res.json({ encryptedData: ciphertext });
 });
 
 router.post('/dev/set-location/:locationId', async (req, res) => {
-  // Copy the handler
+  if (process.env.NODE_ENV === 'production') return res.status(404).end();
+
+  const { locationId } = req.params;
+  if (!locationId || !(await installs.has(locationId))) {
+    return res.status(400).json({ error: 'unknown_location_or_not_installed' });
+  }
+
+  // normal signed cookie
+  res.cookie('ghl_location', locationId, {
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+    signed: true,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+  // CHIPS/partitioned duplicate for cross-site iframes
+  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
+  res.append('Set-Cookie',
+    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
+  );
+
+  res.json({ ok: true, locationId });
 });
 
 export default router;
