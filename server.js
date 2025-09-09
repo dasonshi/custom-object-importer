@@ -686,27 +686,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// User context decryption (for personalization)
-app.post('/api/decrypt-user-data', express.json(), async (req, res) => {
-  try {
-    const { encryptedData } = req.body;
-    
-    if (!encryptedData) {
-      return res.status(400).json({ error: 'Encrypted data required' });
-    }
-
-    // Use CryptoJS directly (no const declaration needed)
-    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
-      .toString(CryptoJS.enc.Utf8);
-    
-    const userData = JSON.parse(decrypted);
-    
-    res.json(userData);
-  } catch (error) {
-    console.error('Failed to decrypt user data:', error);
-    res.status(400).json({ error: 'Failed to decrypt user data' });
-  }
-});
 
 
 
