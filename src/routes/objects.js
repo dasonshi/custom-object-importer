@@ -4,7 +4,10 @@ import axios from 'axios';
 import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import { installs } from '../middleware/auth.js';
-
+import Papa from 'papaparse';
+import { withAccessToken, API_BASE } from '../services/tokenService.js';
+import { handleAPIError } from '../utils/apiHelpers.js';
+import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
 const router = Router();
 
 // List all custom objects
@@ -183,5 +186,287 @@ router.get('/:objectKey/associations', requireAuth, handleLocationOverride, asyn
     }
   }
 });
+// Export all records for an object as CSV
+router.get('/:objectKey/records/export', requireAuth, handleLocationOverride, async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  try {
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    // First, fetch the field definitions to know the structure
+    const token = await withAccessToken(locationId);
+    const fieldsResponse = await axios.get(
+      `${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`,
+      {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        },
+        params: { locationId }
+      }
+    );
+    
+    const fields = fieldsResponse.data?.fields || [];
+    const fieldMap = {};
+    
+    // Build a map of field keys to their labels and types
+    fields.forEach(field => {
+      if (field.fieldKey) {
+        const parts = field.fieldKey.split('.');
+        const fieldKey = parts[parts.length - 1];
+        fieldMap[fieldKey] = {
+          label: field.name || fieldKey,
+          dataType: field.dataType
+        };
+      }
+    });
+    
+    // Fetch all records with pagination
+    let allRecords = [];
+    let page = 1;
+    let hasMore = true;
+    const pageLimit = 100; // Max per request
+    
+    while (hasMore) {
+      const searchBody = {
+        locationId: locationId,
+        page: page,
+        pageLimit: pageLimit,
+        query: '',
+        searchAfter: []
+      };
+      
+      const response = await axios.post(
+        `${API_BASE}/objects/${encodeURIComponent(apiObjectKey)}/records/search`,
+        searchBody,
+        {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28',
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      const records = response.data?.records || [];
+      allRecords = [...allRecords, ...records];
+      
+      // Check if we've fetched everything
+      hasMore = records.length === pageLimit && allRecords.length < (response.data?.total || 0);
+      page++;
+      
+      // Safety limit to prevent infinite loops
+      if (page > 100) {
+        console.warn(`Safety limit reached for ${objectKey} export, stopping at ${allRecords.length} records`);
+        hasMore = false;
+      }
+    }
+    
+    // Handle empty results
+    if (allRecords.length === 0) {
+      // Still return an empty CSV with headers
+      const headers = ['id', 'created_at', 'updated_at'];
+      const csv = Papa.unparse({
+        fields: headers,
+        data: []
+      });
+      
+      const timestamp = new Date().toISOString().split('T')[0];
+      const filename = `${cleanKey}-export-${timestamp}.csv`;
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-cache');
+      
+      return res.send(csv);
+    }
+    
+    // Get all unique field keys from all records
+    const allFieldKeys = new Set();
+    allRecords.forEach(record => {
+      if (record.properties) {
+        Object.keys(record.properties).forEach(key => allFieldKeys.add(key));
+      }
+    });
+    
+    // Build CSV headers - include system fields and custom fields
+    const systemHeaders = ['id', 'created_at', 'updated_at', 'created_by', 'updated_by'];
+    const customHeaders = Array.from(allFieldKeys).sort();
+    const headers = [...systemHeaders, ...customHeaders];
+    
+    // Build CSV rows
+    const rows = allRecords.map(record => {
+      const row = [];
+      
+      // System fields
+      row.push(record.id || '');
+      row.push(record.createdAt || '');
+      row.push(record.updatedAt || '');
+      row.push(record.createdBy?.sourceId || '');
+      row.push(record.lastUpdatedBy?.sourceId || '');
+      
+      // Custom fields
+      customHeaders.forEach(fieldKey => {
+        const value = record.properties?.[fieldKey];
+        
+        // Handle different data types
+        if (value === null || value === undefined) {
+          row.push('');
+        } else if (typeof value === 'object') {
+          // Handle special field types
+          if (value.currency && value.value !== undefined) {
+            // MONETORY field
+            row.push(value.value.toString());
+          } else if (Array.isArray(value)) {
+            // Handle arrays (MULTIPLE_OPTIONS, FILE_UPLOAD, etc.)
+            if (value.length > 0 && value[0].url) {
+              // FILE_UPLOAD - extract URLs
+              row.push(value.map(f => f.url).join('|'));
+            } else {
+              // Regular array
+              row.push(value.join('|'));
+            }
+          } else {
+            // Other objects - stringify
+            row.push(JSON.stringify(value));
+          }
+        } else {
+          // Simple values
+          row.push(String(value));
+        }
+      });
+      
+      return row;
+    });
+    
+    // Convert to CSV format using Papaparse
+    const csv = Papa.unparse({
+      fields: headers.map(h => {
+        // Use field labels where available
+        if (fieldMap[h]) {
+          return fieldMap[h].label;
+        }
+        // Make system headers more readable
+        return h.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      }),
+      data: rows
+    });
+    
+    // Set response headers for file download
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `${cleanKey}-export-${timestamp}.csv`;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+    
+    // Send the CSV
+    res.send(csv);
+    
+  } catch (e) {
+    console.error(`Failed to export records for ${objectKey}:`, e?.response?.data || e.message);
+    handleAPIError(res, e, 'Export records');
+  }
+});
 
+// Search/Get records for a specific object (for viewing, not export)
+router.post('/:objectKey/records/search', requireAuth, handleLocationOverride, async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  try {
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    const requestBody = {
+      locationId: locationId,
+      page: req.body.page || 1,
+      pageLimit: req.body.pageLimit || 20,
+      query: req.body.query || '',
+      searchAfter: req.body.searchAfter || []
+    };
+    
+    const token = await withAccessToken(locationId);
+    const response = await axios.post(
+      `${API_BASE}/objects/${encodeURIComponent(apiObjectKey)}/records/search`,
+      requestBody,
+      {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json({
+      objectKey: cleanKey,
+      ...response.data
+    });
+    
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      res.json({
+        objectKey: objectKey.replace(/^custom_objects\./, ''),
+        records: [],
+        total: 0
+      });
+    } else {
+      console.error(`Failed to search records for ${objectKey}:`, e?.response?.data || e.message);
+      handleAPIError(res, e, 'Search object records');
+    }
+  }
+});
+
+// Convenience GET endpoint for simple record queries
+router.get('/:objectKey/records', requireAuth, handleLocationOverride, async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+  
+  try {
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    const apiObjectKey = `custom_objects.${cleanKey}`;
+    
+    const requestBody = {
+      locationId: locationId,
+      page: parseInt(req.query.page) || 1,
+      pageLimit: parseInt(req.query.limit) || parseInt(req.query.pageLimit) || 20,
+      query: req.query.query || req.query.search || '',
+      searchAfter: req.query.searchAfter ? 
+        (Array.isArray(req.query.searchAfter) ? req.query.searchAfter : [req.query.searchAfter]) : []
+    };
+    
+    const token = await withAccessToken(locationId);
+    const response = await axios.post(
+      `${API_BASE}/objects/${encodeURIComponent(apiObjectKey)}/records/search`,
+      requestBody,
+      {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    res.json({
+      objectKey: cleanKey,
+      ...response.data
+    });
+    
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      res.json({
+        objectKey: objectKey.replace(/^custom_objects\./, ''),
+        records: [],
+        total: 0
+      });
+    } else {
+      console.error(`Failed to fetch records for ${objectKey}:`, e?.response?.data || e.message);
+      handleAPIError(res, e, 'Fetch object records');
+    }
+  }
+});
 export default router;
