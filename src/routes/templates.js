@@ -52,7 +52,7 @@ router.get('/fields/:objectKey', (req, res) => {
   res.send(csvContent);
 });
 
-// Custom values template
+// Custom values template (static - for create mode)
 router.get('/custom-values', (req, res) => {
   const headers = ['id', 'name', 'value'];
   const example = ['', 'Custom Field Name', 'Value'];
@@ -62,6 +62,78 @@ router.get('/custom-values', (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="custom-values-template.csv"');
   res.send(csv);
+});
+
+// Dynamic custom values template (for update mode with existing values)
+router.get('/custom-values/update', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  
+  try {
+    // Fetch all existing custom values for this location
+    const token = await withAccessToken(locationId);
+    const response = await axios.get(`${API_BASE}/locations/${locationId}/customValues`, {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        Version: '2021-07-28'
+      }
+    });
+    
+    const customValues = response.data?.customValues || [];
+    
+    // CSV headers
+    const headers = ['id', 'name', 'value'];
+    
+    // If no custom values exist, provide empty template with headers only
+    if (customValues.length === 0) {
+      const csv = [headers.join(','), ',New Custom Value,New Value'].join('\n');
+      
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="custom-values-update-template.csv"');
+      return res.send(csv);
+    }
+    
+    // Build CSV rows from existing custom values
+    const rows = customValues.map(cv => [
+      cv.id || '',
+      cv.name || '',
+      cv.value || ''
+    ]);
+    
+    // Create CSV content
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => {
+        // Escape commas and quotes in CSV
+        const stringValue = String(cell || '');
+        if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      }).join(','))
+    ].join('\n');
+    
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `custom-values-update-${timestamp}.csv`;
+    
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csvContent);
+    
+  } catch (e) {
+    console.error('Failed to generate custom values update template:', e?.response?.data || e.message);
+    
+    // Fallback to basic template on error
+    const headers = ['id', 'name', 'value'];
+    const fallback = [headers.join(','), ',Custom Value Name,Custom Value'].join('\n');
+    
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="custom-values-template.csv"');
+    res.send(fallback);
+  }
 });
 
 // Relations template (generic - backward compatibility)
