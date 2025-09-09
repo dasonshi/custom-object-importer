@@ -17,6 +17,7 @@ import { generateEncryptionKey, createSecureState, verifySecureState, validateEn
 import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLocationOverride, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
+import authRoutes from './src/routes/auth.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -168,7 +169,8 @@ app.use(rateLimit({
   skip: (req) => req.method === 'OPTIONS' || req.path === '/health',
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
-
+// Mount auth routes
+app.use('/api/auth', authRoutes);
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {
@@ -223,61 +225,6 @@ app.get('/api/debug/sdk-methods', (req, res) => {
   }
   
   res.json(methods);
-});
-// Auth status endpoint
-app.get('/api/auth/status', async (req, res) => {
-  const locationId = req.signedCookies?.ghl_location;
-  
-  if (!locationId) {
-    return res.json({
-      authenticated: false,
-      message: 'Not authenticated'
-    });
-  }
-
-  const hasInstall = await installs.has(locationId);
-  if (!hasInstall) {
-    return res.json({
-      authenticated: false,
-      message: 'Not authenticated'
-    });
-  }
-
-  const install = await installs.get(locationId);
-  const isExpired = Date.now() > (install.expires_at ?? 0) - 30_000;
-  
-  res.json({
-    authenticated: true,
-    locationId,
-    tokenStatus: isExpired ? 'needs_refresh' : 'valid',
-    expiresIn: Math.max(0, Math.floor(((install.expires_at ?? 0) - Date.now()) / 1000))
-  });
-});
-// Logout endpoint
-app.post('/api/auth/logout', (req, res) => {
-clearAuthCookie(res);
-  res.json({ message: 'Logged out successfully' });
-});
-// Disconnect and clear installation
-app.post('/api/auth/disconnect', requireAuth, async (req, res) => {
-  const locationId = req.locationId;
-  
-  try {
-    // Remove installation from database
-    await installs.delete(locationId);
-    
-    // Clear cookies
-    clearAuthCookie(res);
-
-    
-    res.json({ 
-      message: 'Disconnected successfully',
-      redirectUrl: '/oauth/install' // Frontend can redirect here for reauth
-    });
-  } catch (e) {
-    console.error('Disconnect error:', e.message);
-    res.status(500).json({ error: 'Failed to disconnect' });
-  }
 });
 
 app.get('/oauth/callback', async (req, res) => {
