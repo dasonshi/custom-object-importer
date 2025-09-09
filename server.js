@@ -25,6 +25,7 @@ import agencyRoutes from './src/routes/agency.js';
 import customValuesRoutes from './src/routes/customValues.js';
 import associationsRoutes from './src/routes/associations.js';
 import importRoutes from './src/routes/imports/index.js';
+import appContextRoutes from './src/routes/appContext.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -191,6 +192,8 @@ app.use('/api/associations', associationsRoutes);
 
 app.use('/import', importRoutes);
 app.use('/api', importRoutes);  // For the /api/objects/import style routes
+app.use('/api', appContextRoutes);
+
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {

@@ -347,7 +347,33 @@ router.post('/objects/import', requireAuth, upload.single('objects'), async (req
   }
 });
 
-// Add all other import routes here (fields, records, associations, custom-values, relations)
-// Copy them from your server.js
+// ... continuing in src/routes/imports/index.js after the objects import route
+
+// Import fields for a specific object
+router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fields'), async (req, res) => {
+  // Copy lines 290-547 from your server.js here
+  // This is the entire fields import handler
+});
+
+// Import records for a specific object  
+router.post('/objects/:objectKey/records/import', requireAuth, upload.single('records'), async (req, res) => {
+  // Copy lines 552-683 from your server.js here
+  // This is the entire records import handler
+});
+
+// Import association types
+router.post('/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
+  // Copy lines 685-738 from your server.js here
+});
+
+// Import custom values
+router.post('/custom-values/import', requireAuth, upload.single('customValues'), async (req, res) => {
+  // Copy lines 740-802 from your server.js here
+});
+
+// Import relations
+router.post('/associations/relations/import', requireAuth, upload.single('relations'), async (req, res) => {
+  // Copy lines 804-881 from your server.js here  
+});
 
 export default router;
