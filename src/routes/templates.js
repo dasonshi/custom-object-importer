@@ -114,22 +114,26 @@ router.get('/relations/:associationId', requireAuth, async (req, res) => {
       throw new Error(`Association with ID ${associationId} not found`);
     }
     
-    // Get clean object labels for column names
-    const firstObjectLabel = association.firstObjectLabel?.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'first_object';
-    const secondObjectLabel = association.secondObjectLabel?.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'second_object';
+    // Get clean object keys for column names  
+    const firstObjectKey = association.firstObjectKey || 'first_object';
+    const secondObjectKey = association.secondObjectKey || 'second_object';
     
-    // Create dynamic headers using actual object names
+    // Clean object keys for safe column names (replace dots and special chars with underscores)
+    const cleanFirstKey = firstObjectKey.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const cleanSecondKey = secondObjectKey.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    
+    // Create dynamic headers using actual object keys
     const headers = [
       'association_id',
-      `${firstObjectLabel}_record_id`,
-      `${secondObjectLabel}_record_id`
+      `${cleanFirstKey}_record_id`,
+      `${cleanSecondKey}_record_id`
     ];
     
-    // Create example rows with clear object context
+    // Create example rows with object key context
     const examples = [
-      [associationId, `${firstObjectLabel}_rec_123`, `${secondObjectLabel}_rec_456`],
-      [associationId, `${firstObjectLabel}_rec_789`, `${secondObjectLabel}_rec_abc`],
-      [associationId, `${firstObjectLabel}_rec_def`, `${secondObjectLabel}_rec_ghi`]
+      [associationId, `${cleanFirstKey}_rec_123`, `${cleanSecondKey}_rec_456`],
+      [associationId, `${cleanFirstKey}_rec_789`, `${cleanSecondKey}_rec_abc`],
+      [associationId, `${cleanFirstKey}_rec_def`, `${cleanSecondKey}_rec_ghi`]
     ];
     
     const csvContent = [
@@ -137,8 +141,8 @@ router.get('/relations/:associationId', requireAuth, async (req, res) => {
       ...examples.map(row => row.join(','))
     ].join('\n');
     
-    // Generate descriptive filename
-    const filename = `${firstObjectLabel}-${secondObjectLabel}-relations-template.csv`;
+    // Generate descriptive filename using object keys
+    const filename = `${cleanFirstKey}-${cleanSecondKey}-relations-template.csv`;
     
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'text/csv');
