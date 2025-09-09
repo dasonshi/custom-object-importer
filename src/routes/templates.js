@@ -64,7 +64,7 @@ router.get('/custom-values', (req, res) => {
   res.send(csv);
 });
 
-// Relations template
+// Relations template (generic - backward compatibility)
 router.get('/relations', (req, res) => {
   const headers = ['association_id', 'first_record_id', 'second_record_id'];
   const examples = [
@@ -82,6 +82,89 @@ router.get('/relations', (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="relations-template.csv"');
   res.send(csvContent);
+});
+
+// Dynamic relations template for specific association
+router.get('/relations/:associationId', requireAuth, async (req, res) => {
+  const locationId = req.locationId;
+  const { associationId } = req.params;
+  
+  try {
+    // Fetch ALL associations and find the specific one by ID
+    const token = await withAccessToken(locationId);
+    const associationsResponse = await axios.get(
+      `${API_BASE}/associations/`,
+      {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        },
+        params: { locationId }
+      }
+    );
+    
+    // Find the specific association by ID
+    const associations = Array.isArray(associationsResponse.data) 
+      ? associationsResponse.data 
+      : associationsResponse.data?.associations || [];
+      
+    const association = associations.find(assoc => assoc.id === associationId);
+    
+    if (!association) {
+      throw new Error(`Association with ID ${associationId} not found`);
+    }
+    
+    // Get clean object labels for column names
+    const firstObjectLabel = association.firstObjectLabel?.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'first_object';
+    const secondObjectLabel = association.secondObjectLabel?.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'second_object';
+    
+    // Create dynamic headers using actual object names
+    const headers = [
+      'association_id',
+      `${firstObjectLabel}_record_id`,
+      `${secondObjectLabel}_record_id`
+    ];
+    
+    // Create example rows with clear object context
+    const examples = [
+      [associationId, `${firstObjectLabel}_rec_123`, `${secondObjectLabel}_rec_456`],
+      [associationId, `${firstObjectLabel}_rec_789`, `${secondObjectLabel}_rec_abc`],
+      [associationId, `${firstObjectLabel}_rec_def`, `${secondObjectLabel}_rec_ghi`]
+    ];
+    
+    const csvContent = [
+      headers.join(','),
+      ...examples.map(row => row.join(','))
+    ].join('\n');
+    
+    // Generate descriptive filename
+    const filename = `${firstObjectLabel}-${secondObjectLabel}-relations-template.csv`;
+    
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csvContent);
+    
+  } catch (e) {
+    console.error(`Failed to generate relations template for ${associationId}:`, e?.response?.data || e.message);
+    
+    // Fallback to generic template if association fetch fails
+    const headers = ['association_id', 'first_record_id', 'second_record_id'];
+    const examples = [
+      [associationId, 'record_123', 'record_456'],
+      [associationId, 'record_789', 'record_abc']
+    ];
+    
+    const csvContent = [
+      headers.join(','),
+      ...examples.map(row => row.join(','))
+    ].join('\n');
+    
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="relations-template.csv"');
+    res.send(csvContent);
+  }
 });
 
 // Error route for fields without object key

@@ -942,11 +942,32 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
       try {
         // Required fields
         const associationId = String(row.association_id || '').trim();
-        const firstRecordId = String(row.first_record_id || '').trim();
-        const secondRecordId = String(row.second_record_id || '').trim();
+        
+        // Support both old format (first_record_id, second_record_id) and new dynamic format
+        let firstRecordId = '';
+        let secondRecordId = '';
+        
+        // Try old format first
+        if (row.first_record_id && row.second_record_id) {
+          firstRecordId = String(row.first_record_id).trim();
+          secondRecordId = String(row.second_record_id).trim();
+        } else {
+          // Try to find dynamic column names ending with '_record_id'
+          const recordIdColumns = Object.keys(row).filter(key => 
+            key.endsWith('_record_id') && key !== 'association_id'
+          );
+          
+          if (recordIdColumns.length >= 2) {
+            // Sort to ensure consistent order (alphabetical)
+            recordIdColumns.sort();
+            firstRecordId = String(row[recordIdColumns[0]] || '').trim();
+            secondRecordId = String(row[recordIdColumns[1]] || '').trim();
+          }
+        }
 
         if (!associationId || !firstRecordId || !secondRecordId) {
-          throw new Error('Missing required fields (association_id, first_record_id, second_record_id)');
+          const availableColumns = Object.keys(row).join(', ');
+          throw new Error(`Missing required fields. Expected: association_id and two record ID columns. Found columns: ${availableColumns}`);
         }
 
         // Optional: validate that the association exists first
