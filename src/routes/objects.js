@@ -5,9 +5,7 @@ import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import { installs } from '../middleware/auth.js';
 import Papa from 'papaparse';
-import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import { handleAPIError } from '../utils/apiHelpers.js';
-import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
 const router = Router();
 
 // List all custom objects
