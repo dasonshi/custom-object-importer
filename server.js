@@ -20,6 +20,8 @@ import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLoca
 
 // Replace the HighLevel lines with this temporary debug version:
 import { createRequire } from 'module';
+// Generate encryption key for OAuth state
+const ENC_KEY = generateEncryptionKey(process.env.APP_SECRET);
 const require = createRequire(import.meta.url);
 const HighLevelPackage = require('@gohighlevel/api-client');
 const HighLevel = HighLevelPackage.default || HighLevelPackage.HighLevel || HighLevelPackage;
@@ -52,7 +54,7 @@ app.disable('x-powered-by');
 
 // ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
 app.get('/oauth/install', (req, res) => {
-  const state = createSecureState();
+  const state = createSecureState(ENC_KEY);
 
   const scopes = [
     'objects/schema.readonly',
@@ -169,102 +171,12 @@ app.use(rateLimit({
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 
-// Generate encryption key from APP_SECRET
-const ENC_KEY = generateEncryptionKey(process.env.APP_SECRET);
-// Store tokens safely (use database in production)
-const installs = new InstallsDB(ENC_KEY);
 // ===== UTILITY FUNCTIONS =====
-function setAuthCookie(res, locationId) {
-  res.cookie('ghl_location', locationId, {
-    domain: process.env.COOKIE_DOMAIN || undefined,
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-    signed: true,
-    maxAge: 7 * 24 * 60 * 60 * 1000
-  });
-  
-  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-  res.append(
-    'Set-Cookie',
-    `ghl_location=${encodeURIComponent(locationId)}; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=604800`
-  );
-}
-
-function clearAuthCookie(res) {
-  res.clearCookie('ghl_location', {
-    domain: process.env.COOKIE_DOMAIN || undefined,
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none'
-  });
-  
-  const d = process.env.COOKIE_DOMAIN ? `Domain=${process.env.COOKIE_DOMAIN}; ` : '';
-  res.append(
-    'Set-Cookie',
-    `ghl_location=; Path=/; ${d}HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`
-  );
-}
 
 async function callGHLAPI(locationId, apiFunction) {
   await withAccessToken(locationId);
   return await apiFunction();
 }
-
-// Authentication middleware functions
-async function requireAuth(req, res, next) {
-  let locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
-
-  // allow explicit override via ?locationId= or X-Location-Id
-  const override = (req.query.locationId || req.get('x-location-id') || '').trim();
-  if (override && override !== locationId) {
-    if (await installs.has(override)) {
-      // set signed cookie
-      setAuthCookie(res, override);
-      locationId = override;
-    } else {
-      return res.status(403).json({ error: 'invalid_location', message: 'Unknown or uninstalled locationId' });
-    }
-  }
-
-  if (!locationId) {
-    return res.status(401).json({ error: 'Authentication required', message: 'Please complete OAuth setup first' });
-  }
-
-  const hasInstall = await installs.has(locationId);
-  if (!hasInstall) {
-clearAuthCookie(res);
-    return res.status(401).json({ error: 'Installation not found', message: 'Please re-authenticate' });
-  }
-
-  req.locationId = locationId;
-  next();
-}
-
-function validateTenant(req, res, next) {
-  const paramLocation = req.params.locationId || req.query.locationId;
-  
-  if (paramLocation && paramLocation !== req.locationId) {
-    return res.status(403).json({ 
-      error: 'Access denied',
-      message: 'Cannot access data for this location'
-    });
-  }
-  
-  next();
-}
-// Add this RIGHT AFTER the validateTenant function
-function handleLocationOverride(req, res, next) {
-  const requestedLocationId = req.query.locationId || req.params.locationId;
-  
-  if (requestedLocationId && requestedLocationId !== req.locationId) {
-    console.log(`Location override: ${req.locationId} -> ${requestedLocationId}`);
-    req.locationId = requestedLocationId;
-  }
-  
-  next();
-}
-
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
   const healthData = {
@@ -386,7 +298,7 @@ app.get('/oauth/callback', async (req, res) => {
 // Marketplace sometimes omits `state`; verify if present, otherwise proceed
 if (typeof state === 'string' && state.length > 0) {
   try {
-    verifySecureState(state);
+    verifySecureState(state,ENC_KEY);
   } catch (e) {
     console.error('OAuth state validation failed:', e.message);
     return res.status(400).send(`Invalid or expired state: ${e.message}`);
