@@ -11,10 +11,6 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { InstallsDB } from './database.js';
 import CryptoJS from 'crypto-js';
-import { parseCSV, cleanupTempFiles } from './src/utils/csvParser.js';
-import { normalizeDataType, parseOptions, asBool } from './src/utils/dataTransformers.js';
-import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup } from './src/utils/crypto.js';
-import { handleAPIError } from './src/utils/apiHelpers.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -169,7 +165,10 @@ app.use(rateLimit({
 }));
 
 // Generate encryption key from APP_SECRET
-const ENC_KEY = generateEncryptionKey(process.env.APP_SECRET);
+const ENC_KEY = crypto.createHash('sha256')
+  .update(String(process.env.APP_SECRET || 'dev-secret-change-me-in-production'))
+  .digest();
+
 // Store tokens safely (use database in production)
 const installs = new InstallsDB(ENC_KEY);
 // ===== UTILITY FUNCTIONS =====
@@ -205,11 +204,95 @@ function clearAuthCookie(res) {
   );
 }
 
+function handleAPIError(res, error, operation = 'Operation') {
+  console.error(`${operation} error:`, error?.response?.data || error.message);
+  res.status(error?.response?.status || 400).json({
+    error: `${operation} failed`,
+    message: error?.response?.data?.message || error.message,
+    details: error?.response?.data || error.message
+  });
+}
+
 async function callGHLAPI(locationId, apiFunction) {
   await withAccessToken(locationId);
   return await apiFunction();
 }
 
+async function cleanupTempFiles(filePaths) {
+  for (const path of filePaths.filter(Boolean)) {
+    try {
+      await fs.unlink(path);
+    } catch (e) {
+      console.warn(`Failed to clean up temp file ${path}:`, e.message);
+    }
+  }
+}
+
+function validateEncryptionSetup() {
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.APP_SECRET || process.env.APP_SECRET === 'dev-secret-change-me-in-production') {
+      console.error('⚠ APP_SECRET must be set to a secure random value in production!');
+      process.exit(1);
+    }
+    if (process.env.APP_SECRET.length < 32) {
+      console.error('⚠ APP_SECRET should be at least 32 characters long for security');
+      process.exit(1);
+    }
+  }
+}
+function createSecureState() {
+  const payload = {
+    timestamp: Date.now(),
+    nonce: crypto.randomBytes(16).toString('hex')
+  };
+  
+  const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', ENC_KEY).update(data).digest('base64url');
+  
+  return `${data}.${signature}`;
+}
+
+function verifySecureState(state) {
+  if (!state || typeof state !== 'string') {
+    throw new Error('Missing or invalid state parameter');
+  }
+  
+  const parts = state.split('.');
+  if (parts.length !== 2) {
+    throw new Error('Invalid state format');
+  }
+  
+  const [data, signature] = parts;
+  
+  // Verify signature
+  const expectedSignature = crypto.createHmac('sha256', ENC_KEY).update(data).digest('base64url');
+  if (signature !== expectedSignature) {
+    throw new Error('Invalid state signature');
+  }
+  
+  // Parse and validate payload
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+  } catch (e) {
+    throw new Error('Invalid state payload');
+  }
+  
+  // Check expiration (10 minutes)
+  const age = Date.now() - payload.timestamp;
+  const MAX_AGE = 10 * 60 * 1000; // 10 minutes
+  
+  if (age > MAX_AGE) {
+    throw new Error('State parameter expired');
+  }
+  
+  if (age < 0) {
+    throw new Error('State parameter from future');
+  }
+  
+  return payload;
+}
+// Authentication middleware functions
 // Authentication middleware functions
 async function requireAuth(req, res, next) {
   let locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
@@ -506,6 +589,74 @@ console.error(`Token refresh failed for ${locationId}:`, e?.response?.data || e.
   
   return install.access_token;
 }
+
+async function parseCSV(filePath) {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const result = Papa.parse(content, {
+      header: true,           // Use first row as headers
+      skipEmptyLines: true,   // Skip empty rows
+      trim: true,            // Trim whitespace
+      dynamicTyping: false,  // keep IDs/keys as strings
+      transformHeader: (header) => String(header || '').trim().toLowerCase().replace(/\s+/g, '_'),
+      transform: (v) => (typeof v === 'string' ? v.trim() : v),
+      complete: (results) => {
+        if (results.errors.length > 0) {
+          console.warn(`CSV parsing warnings for ${filePath}:`, results.errors);
+        }
+      }
+    });
+    
+    if (result.errors.length > 0) {
+      const criticalErrors = result.errors.filter(err => err.type === 'Delimiter');
+      if (criticalErrors.length > 0) {
+        throw new Error(`Critical CSV parsing errors: ${criticalErrors.map(e => e.message).join(', ')}`);
+      }
+    }
+    
+    return result.data;
+  } catch (error) {
+    console.error(`Failed to parse CSV file ${filePath}:`, error.message);
+    throw new Error(`CSV parsing failed: ${error.message}`);
+  }
+}
+function normalizeDataType(input) {
+  const t = String(input || 'TEXT').toLowerCase();
+  const map = {
+    text: 'TEXT',
+    textarea: 'LARGE_TEXT', large_text: 'LARGE_TEXT',
+    number: 'NUMERICAL', numerical: 'NUMERICAL',
+    phone: 'PHONE',
+    email: 'EMAIL',
+    date: 'DATE',
+    money: 'MONETORY', monetary: 'MONETORY', currency: 'MONETORY',
+    checkbox: 'CHECKBOX',
+    select: 'SINGLE_OPTIONS', single: 'SINGLE_OPTIONS', single_options: 'SINGLE_OPTIONS',
+    multiselect: 'MULTIPLE_OPTIONS', multiple: 'MULTIPLE_OPTIONS', multiple_options: 'MULTIPLE_OPTIONS',
+    textbox_list: 'TEXTBOX_LIST',
+    file: 'FILE_UPLOAD', file_upload: 'FILE_UPLOAD',
+    radio: 'RADIO'
+  };
+  return map[t] || String(input).toUpperCase();
+}
+
+function parseOptions(raw) {
+  if (!raw) return undefined;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      return arr.map(o => (typeof o === 'string' ? { key: o.toLowerCase().replace(/\s+/g,'_'), label: o } : o));
+    }
+  } catch {}
+  return String(raw).split('|').map(s => s.trim()).filter(Boolean)
+    .map(label => ({ key: label.toLowerCase().replace(/\s+/g,'_'), label }));
+}
+
+function asBool(v, fallback=false) {
+  if (v === undefined || v === null || v === '') return fallback;
+  return String(v).toLowerCase() === 'true';
+}
+
 // ===== Import Route =====
 app.post('/import/:locationId', requireAuth, validateTenant, upload.fields([
   { name: 'objects', maxCount: 1 },
