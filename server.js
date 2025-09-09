@@ -26,6 +26,7 @@ import customValuesRoutes from './src/routes/customValues.js';
 import associationsRoutes from './src/routes/associations.js';
 import importRoutes from './src/routes/imports/index.js';
 import appContextRoutes from './src/routes/appContext.js';
+import feedbackRoutes from './src/routes/feedback.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -189,6 +190,7 @@ app.use('/api/objects', objectRoutes);
 app.use('/api', agencyRoutes);
 app.use('/api/custom-values', customValuesRoutes);
 app.use('/api/associations', associationsRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 app.use('/import', importRoutes);
 app.use('/api', appContextRoutes);  // Mount appContext routes first to avoid wildcard conflicts
