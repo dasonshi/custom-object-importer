@@ -15,6 +15,7 @@ import { parseCSV, cleanupTempFiles } from './src/utils/csvParser.js';
 import { normalizeDataType, parseOptions, asBool } from './src/utils/dataTransformers.js';
 import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup } from './src/utils/crypto.js';
 import { handleAPIError } from './src/utils/apiHelpers.js';
+import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLocationOverride, installs } from './src/middleware/auth.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
