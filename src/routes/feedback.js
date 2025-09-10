@@ -12,11 +12,12 @@ router.post('/submit', async (req, res) => {
     name: req.body?.name,
     email: req.body?.email,
     component: req.body?.component,
+    otherComponent: req.body?.otherComponent,
     messageLength: req.body?.message?.length || 0
   });
   
   try {
-    const { name, email, component, message } = req.body;
+    const { name, email, component, message, otherComponent } = req.body;
 
     // Validate required fields
     if (!name || !email || !component || !message) {
@@ -48,11 +49,16 @@ router.post('/submit', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email format' });
     }
 
+    // Determine the final component value
+    const finalComponent = component === 'other' && otherComponent 
+      ? otherComponent.trim() 
+      : component.trim();
+
     // Prepare payload for GHL webhook
     const webhookPayload = {
       name: name.trim(),
       email: email.trim(),
-      component: component.trim(),
+      component: finalComponent,
       message: message.trim(),
       timestamp: new Date().toISOString(),
       source: 'app_feedback_form'
