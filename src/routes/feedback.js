@@ -8,6 +8,13 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Submit feedback endpoint
 router.post('/submit', async (req, res) => {
+  console.log('📩 Feedback submission received:', {
+    name: req.body?.name,
+    email: req.body?.email,
+    component: req.body?.component,
+    messageLength: req.body?.message?.length || 0
+  });
+  
   try {
     const { name, email, component, message } = req.body;
 
@@ -68,6 +75,8 @@ router.post('/submit', async (req, res) => {
       });
     }
 
+    console.log('✅ Feedback successfully forwarded to GHL webhook');
+    
     // Success response
     res.json({
       success: true,
