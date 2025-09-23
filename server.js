@@ -294,7 +294,8 @@ setAuthCookie(res, locationId);
   );
 }
 
-return res.redirect('/launch');
+// Redirect to the HighLevel location dashboard
+return res.redirect(`https://app.gohighlevel.com/location/${locationId}/dashboard`);
     
   } catch (e) {
     console.error('OAuth callback error:', e?.response?.status, e?.response?.data || e.message);
