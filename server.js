@@ -294,8 +294,8 @@ setAuthCookie(res, locationId);
   );
 }
 
-// Redirect to the HighLevel location dashboard
-return res.redirect(`https://app.gohighlevel.com/location/${locationId}/dashboard`);
+// Redirect to the app within the HighLevel location
+return res.redirect(`https://app.gohighlevel.com/v2/location/${locationId}/custom-page-link/68b87115d7dcf1e9cc0c80a0`);
     
   } catch (e) {
     console.error('OAuth callback error:', e?.response?.status, e?.response?.data || e.message);
