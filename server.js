@@ -238,23 +238,19 @@ if (typeof state === 'string' && state.length > 0) {
 }
 
   try {
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code: String(code),
+    const codePrefix = String(code).substring(0, 8);
+    console.log(`OAuth callback - code: ${codePrefix}..., client_id: ${process.env.GHL_CLIENT_ID}, redirect_uri: ${process.env.GHL_REDIRECT_URI}`);
+
+    const tokenResp = await global.ghl.oauth.getAccessToken({
       client_id: process.env.GHL_CLIENT_ID,
       client_secret: process.env.GHL_CLIENT_SECRET,
-      redirect_uri: process.env.GHL_REDIRECT_URI
+      code: String(code),
+      grant_type: 'authorization_code',
+      redirect_uri: process.env.GHL_REDIRECT_URI,
     });
 
-const tokenResp = await global.ghl.oauth.getAccessToken({
-  client_id: process.env.GHL_CLIENT_ID,
-  client_secret: process.env.GHL_CLIENT_SECRET,
-  code: String(code),
-  grant_type: 'authorization_code',
-  redirect_uri: process.env.GHL_REDIRECT_URI,
-});
-
-const { access_token, refresh_token, expires_in, locationId } = tokenResp || {};
+    console.log('Token response received:', tokenResp ? 'Success' : 'No response');
+    const { access_token, refresh_token, expires_in, locationId } = tokenResp || {};
 
 if (!locationId) {
   // No location yet? Stash tokens temporarily and let FE finish via /api/app-context
