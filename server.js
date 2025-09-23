@@ -250,6 +250,8 @@ if (typeof state === 'string' && state.length > 0) {
     });
 
     console.log('Token response received:', tokenResp ? 'Success' : 'No response');
+    console.log('Token response keys:', tokenResp ? Object.keys(tokenResp) : 'No response');
+    console.log('LocationId from response:', tokenResp?.locationId || 'Not found');
     const { access_token, refresh_token, expires_in, locationId } = tokenResp || {};
 
 if (!locationId) {
