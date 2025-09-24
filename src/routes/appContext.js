@@ -63,21 +63,31 @@ router.post('/app-context', express.json(), async (req, res) => {
       type: user.type,
       email: user.email
     });
+    console.log('Request cookies check:', {
+      hasPendingTokens: !!req.signedCookies?.ghl_pending_tokens,
+      hasGHLLocation: !!req.signedCookies?.ghl_location,
+      cookieKeys: Object.keys(req.signedCookies || {})
+    });
 // (NEW) 2.5) If FE provides an activeLocation and we have pending tokens from OAuth, finish the install now
 if (user.activeLocation && req.signedCookies?.ghl_pending_tokens) {
   try {
+    console.log(`Found pending tokens for user with activeLocation: ${user.activeLocation}`);
     const bytes = CryptoJS.AES.decrypt(
       req.signedCookies.ghl_pending_tokens,
       process.env.APP_SECRET || 'dev-secret-change-me-in-production'
     );
     const str = bytes.toString(CryptoJS.enc.Utf8);
     const pending = JSON.parse(str || '{}');
+    console.log('Pending tokens structure:', pending ? 'Valid' : 'Invalid');
+
     if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
+      console.log(`Consuming pending tokens and saving to location: ${user.activeLocation}`);
       await installs.set(user.activeLocation, {
         access_token: pending.access_token,
         refresh_token: pending.refresh_token,
         expires_at: pending.expires_at
       });
+
       // Clear the pending cookie and set normal auth cookie
       res.clearCookie('ghl_pending_tokens', {
         httpOnly: true,
@@ -86,6 +96,13 @@ if (user.activeLocation && req.signedCookies?.ghl_pending_tokens) {
         signed: true
       });
       setAuthCookie(res, user.activeLocation);
+      console.log(`✅ Pending tokens consumed successfully for ${user.activeLocation}`);
+    } else {
+      console.warn('Pending tokens missing required fields:', {
+        hasAccessToken: !!pending?.access_token,
+        hasRefreshToken: !!pending?.refresh_token,
+        hasExpiresAt: !!pending?.expires_at
+      });
     }
   } catch (e) {
     console.warn('Failed to consume pending tokens:', e?.message || e);
