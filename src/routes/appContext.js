@@ -139,7 +139,64 @@ if (!user?.activeLocation && pendingTokens) {
   console.log('Have pending tokens but no user activeLocation, checking query params and cookies...');
 
   // Try to get locationId from query parameter or cookie
-  const fallbackLocationId = req.query.locationId || req.body.locationId || cookieLocation;
+  let fallbackLocationId = req.query.locationId || req.body.locationId || cookieLocation;
+
+  // If no fallbackLocationId provided, try to detect it from HighLevel API using the access token
+  if (!fallbackLocationId) {
+    try {
+      console.log('No fallbackLocationId found, attempting to detect from HighLevel API...');
+      const bytes = CryptoJS.AES.decrypt(
+        pendingTokens,
+        process.env.APP_SECRET || 'dev-secret-change-me-in-production'
+      );
+      const str = bytes.toString(CryptoJS.enc.Utf8);
+      const pending = JSON.parse(str || '{}');
+
+      if (pending?.access_token) {
+        // Try to get user info from HighLevel API to determine locationId
+        try {
+          // Try the HighLevel /me endpoint to get current user's location context
+          const response = await axios.get(`${API_BASE}/me`, {
+            headers: {
+              Authorization: `Bearer ${pending.access_token}`,
+              Version: '2021-07-28',
+              Accept: 'application/json'
+            },
+            timeout: 10000,
+          });
+
+          console.log('HighLevel /me API response:', {
+            status: response.status,
+            hasData: !!response.data,
+            dataKeys: response.data ? Object.keys(response.data) : []
+          });
+
+          // Try to extract locationId from the /me response
+          // This might be in response.data.locationId or response.data.currentLocationId
+          const detectedLocationId = response.data?.locationId ||
+                                     response.data?.currentLocationId ||
+                                     response.data?.location?.id ||
+                                     (response.data?.locations && response.data.locations[0]?.id);
+
+          if (detectedLocationId) {
+            fallbackLocationId = detectedLocationId;
+            console.log(`✅ Detected locationId from HighLevel /me API: ${fallbackLocationId}`);
+          }
+        } catch (apiError) {
+          console.log('HighLevel API call failed:', apiError?.response?.status, apiError?.response?.data || apiError.message);
+        }
+      }
+
+      console.log('Pending token payload:', {
+        hasAccessToken: !!pending?.access_token,
+        hasRefreshToken: !!pending?.refresh_token,
+        hasExpiresAt: !!pending?.expires_at,
+        detectedLocationId: fallbackLocationId || 'none'
+      });
+    } catch (e) {
+      console.warn('Failed to inspect pending tokens:', e?.message || e);
+    }
+  }
 
   if (fallbackLocationId) {
     console.log(`Using fallback locationId: ${fallbackLocationId} for pending token consumption`);
