@@ -266,7 +266,7 @@ if (!locationId) {
     console.log('🏢 Bulk installation detected - fetching installed locations');
     console.log('API call parameters:', {
       companyId,
-      appId: process.env.GHL_APP_ID || process.env.GHL_CLIENT_ID,
+      appId: '68ae6ca8bb70273ca2ca7e24',
       clientId: process.env.GHL_CLIENT_ID
     });
 
@@ -280,7 +280,7 @@ if (!locationId) {
         },
         params: {
           companyId,
-          appId: process.env.GHL_APP_ID || process.env.GHL_CLIENT_ID, // Use app ID if available, fallback to client ID
+          appId: '68ae6ca8bb70273ca2ca7e24', // Marketplace App ID (temporarily hardcoded)
           isInstalled: true
         },
         timeout: 10000,
