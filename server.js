@@ -256,12 +256,19 @@ if (typeof state === 'string' && state.length > 0) {
     console.log('LocationId from response:', tokenResp?.locationId || 'Not found');
     console.log('IsBulkInstallation:', tokenResp?.isBulkInstallation || false);
     console.log('UserType:', tokenResp?.userType || 'unknown');
+    console.log('CompanyId:', tokenResp?.companyId || 'Not found');
+    console.log('All token response fields:', Object.entries(tokenResp || {}).map(([k, v]) => `${k}: ${typeof v === 'string' ? v.substring(0, 20) + (v.length > 20 ? '...' : '') : v}`));
     const { access_token, refresh_token, expires_in, locationId, isBulkInstallation, userType, companyId } = tokenResp || {};
 
 if (!locationId) {
   // Handle bulk installation vs pending token scenarios
   if (isBulkInstallation && userType === 'Company' && companyId) {
     console.log('🏢 Bulk installation detected - fetching installed locations');
+    console.log('API call parameters:', {
+      companyId,
+      appId: process.env.GHL_APP_ID || process.env.GHL_CLIENT_ID,
+      clientId: process.env.GHL_CLIENT_ID
+    });
 
     try {
       // Get locations where app is installed using the agency token
@@ -273,7 +280,7 @@ if (!locationId) {
         },
         params: {
           companyId,
-          appId: process.env.GHL_CLIENT_ID, // Use your app's client ID
+          appId: process.env.GHL_APP_ID || process.env.GHL_CLIENT_ID, // Use app ID if available, fallback to client ID
           isInstalled: true
         },
         timeout: 10000,
