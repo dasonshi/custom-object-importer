@@ -254,10 +254,78 @@ if (typeof state === 'string' && state.length > 0) {
     console.log('Token response received:', tokenResp ? 'Success' : 'No response');
     console.log('Token response keys:', tokenResp ? Object.keys(tokenResp) : 'No response');
     console.log('LocationId from response:', tokenResp?.locationId || 'Not found');
-    const { access_token, refresh_token, expires_in, locationId } = tokenResp || {};
+    console.log('IsBulkInstallation:', tokenResp?.isBulkInstallation || false);
+    console.log('UserType:', tokenResp?.userType || 'unknown');
+    const { access_token, refresh_token, expires_in, locationId, isBulkInstallation, userType, companyId } = tokenResp || {};
 
 if (!locationId) {
-  // No location yet? Stash tokens temporarily and let FE finish via /api/app-context
+  // Handle bulk installation vs pending token scenarios
+  if (isBulkInstallation && userType === 'Company' && companyId) {
+    console.log('🏢 Bulk installation detected - fetching installed locations');
+
+    try {
+      // Get locations where app is installed using the agency token
+      const locationsResponse = await axios.get(`${API_BASE}/oauth/installedLocations`, {
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          Version: '2021-07-28',
+          Accept: 'application/json'
+        },
+        params: {
+          companyId,
+          appId: process.env.GHL_CLIENT_ID, // Use your app's client ID
+          isInstalled: true
+        },
+        timeout: 10000,
+      });
+
+      console.log('📍 Installed locations response:', {
+        status: locationsResponse.status,
+        locationCount: locationsResponse.data?.locations?.length || 0,
+        locations: locationsResponse.data?.locations?.map(loc => ({ id: loc._id, name: loc.name })) || []
+      });
+
+      const installedLocations = locationsResponse.data?.locations?.filter(loc => loc.isInstalled) || [];
+
+      if (installedLocations.length > 0) {
+        // For bulk installs, we need to get location tokens for each installed location
+        // For now, let's store the agency token and installed locations info for later processing
+        const payload = JSON.stringify({
+          access_token,
+          refresh_token,
+          expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
+          isBulkInstallation: true,
+          userType,
+          companyId,
+          installedLocations: installedLocations.map(loc => ({ id: loc._id, name: loc.name }))
+        });
+
+        const encrypted = CryptoJS.AES.encrypt(payload, process.env.APP_SECRET || 'dev-secret-change-me-in-production').toString();
+
+        res.cookie('ghl_pending_tokens', encrypted, {
+          domain: process.env.COOKIE_DOMAIN || undefined,
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'none',
+          signed: true,
+          maxAge: 5 * 60 * 1000 // 5 minutes
+        });
+
+        console.log('🍪 Bulk installation tokens stored with', installedLocations.length, 'locations');
+        return res.redirect('/launch');
+      } else {
+        console.log('⚠️ No installed locations found for bulk installation');
+        return res.redirect('/launch?error=no_locations');
+      }
+
+    } catch (error) {
+      console.error('❌ Failed to fetch installed locations:', error?.response?.status, error?.response?.data || error.message);
+      // Fall back to pending tokens approach
+    }
+  }
+
+  // Standard pending tokens approach (for non-bulk or fallback)
   const payload = JSON.stringify({
     access_token,
     refresh_token,

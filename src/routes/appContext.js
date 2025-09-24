@@ -108,11 +108,22 @@ if (user?.activeLocation && pendingTokens) {
 
     if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
       console.log(`Consuming pending tokens and saving to location: ${user.activeLocation}`);
-      await installs.set(user.activeLocation, {
+
+      // Handle both standard and bulk installation tokens
+      const tokenData = {
         access_token: pending.access_token,
         refresh_token: pending.refresh_token,
         expires_at: pending.expires_at
-      });
+      };
+
+      // Add metadata for bulk installations
+      if (pending?.isBulkInstallation) {
+        tokenData.isBulkInstallation = true;
+        tokenData.userType = pending.userType;
+        tokenData.companyId = pending.companyId;
+      }
+
+      await installs.set(user.activeLocation, tokenData);
 
       // Clear the pending cookie and set normal auth cookie
       res.clearCookie('ghl_pending_tokens', {
@@ -195,8 +206,28 @@ if (!user?.activeLocation && pendingTokens) {
         hasAccessToken: !!pending?.access_token,
         hasRefreshToken: !!pending?.refresh_token,
         hasExpiresAt: !!pending?.expires_at,
+        isBulkInstallation: pending?.isBulkInstallation || false,
+        userType: pending?.userType || 'unknown',
+        installedLocationCount: pending?.installedLocations?.length || 0,
         detectedLocationId: fallbackLocationId || 'none'
       });
+
+      // If this is a bulk installation, try to use the user's activeLocation if it's in the installed list
+      if (pending?.isBulkInstallation && pending?.installedLocations && user?.activeLocation) {
+        const matchingLocation = pending.installedLocations.find(loc => loc.id === user.activeLocation);
+        if (matchingLocation) {
+          console.log(`🎯 Found activeLocation ${user.activeLocation} in bulk installation list`);
+          fallbackLocationId = user.activeLocation;
+        } else {
+          console.log(`❌ ActiveLocation ${user.activeLocation} not found in bulk installation list:`, pending.installedLocations.map(l => l.id));
+        }
+      }
+
+      // If still no fallback and we have bulk installation locations, use the first one
+      if (!fallbackLocationId && pending?.installedLocations?.length > 0) {
+        fallbackLocationId = pending.installedLocations[0].id;
+        console.log(`📍 Using first bulk installation location: ${fallbackLocationId} (${pending.installedLocations[0].name})`);
+      }
     } catch (e) {
       console.warn('Failed to inspect pending tokens:', e?.message || e);
     }
@@ -215,11 +246,23 @@ if (!user?.activeLocation && pendingTokens) {
 
       if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
         console.log(`Consuming pending tokens for fallback locationId: ${fallbackLocationId}`);
-        await installs.set(fallbackLocationId, {
+
+        // For bulk installations, we need to handle agency tokens differently
+        // For now, we'll store the agency token but mark it as such
+        const tokenData = {
           access_token: pending.access_token,
           refresh_token: pending.refresh_token,
           expires_at: pending.expires_at
-        });
+        };
+
+        // Add metadata for bulk installations
+        if (pending?.isBulkInstallation) {
+          tokenData.isBulkInstallation = true;
+          tokenData.userType = pending.userType;
+          tokenData.companyId = pending.companyId;
+        }
+
+        await installs.set(fallbackLocationId, tokenData);
 
         // Clear the pending cookie and set normal auth cookie
         res.clearCookie('ghl_pending_tokens', {
