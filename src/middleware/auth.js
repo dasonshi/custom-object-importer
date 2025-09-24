@@ -10,6 +10,7 @@ const installs = new InstallsDB(ENC_KEY);
 export function setAuthCookie(res, locationId) {
   res.cookie('ghl_location', locationId, {
     domain: process.env.COOKIE_DOMAIN || undefined,
+    path: '/',
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'none',
@@ -27,6 +28,7 @@ export function setAuthCookie(res, locationId) {
 export function clearAuthCookie(res) {
   res.clearCookie('ghl_location', {
     domain: process.env.COOKIE_DOMAIN || undefined,
+    path: '/',
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'none'

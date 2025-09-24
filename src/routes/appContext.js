@@ -34,46 +34,68 @@ router.post('/decrypt-user-data', express.json(), async (req, res) => {
 router.post('/app-context', express.json(), async (req, res) => {
   try {
     const { encryptedData } = req.body;
-    // 1) Validate payload
-    if (typeof encryptedData !== 'string' || encryptedData.trim().length === 0) {
+    // 1) Validate payload - allow empty encryptedData for cases where we don't have encrypted context
+    if (typeof encryptedData !== 'string') {
       return res.status(422).json({
         error: 'invalid_payload',
-        message: 'Encrypted user data is required and must be a non-empty string'
+        message: 'Encrypted user data must be a string (can be empty)'
       });
     }
-    // 2) Decrypt user
-    let user;
-    try {
-      const decrypted = CryptoJS.AES.decrypt(
-        encryptedData,
-        process.env.GHL_APP_SHARED_SECRET
-      ).toString(CryptoJS.enc.Utf8);
-      user = JSON.parse(decrypted);
-    } catch (e) {
-      console.error('User decrypt failed:', e.message);
-      return res.status(422).json({
-        error: 'decrypt_failed',
-        message: 'Unable to decrypt user payload (check Shared Secret and ciphertext source)'
-      });
+    // 2) Decrypt user (if encryptedData is provided)
+    let user = null;
+    if (encryptedData && encryptedData.trim().length > 0) {
+      try {
+        const decrypted = CryptoJS.AES.decrypt(
+          encryptedData,
+          process.env.GHL_APP_SHARED_SECRET
+        ).toString(CryptoJS.enc.Utf8);
+        user = JSON.parse(decrypted);
+      } catch (e) {
+        console.error('User decrypt failed:', e.message);
+        return res.status(422).json({
+          error: 'decrypt_failed',
+          message: 'Unable to decrypt user payload (check Shared Secret and ciphertext source)'
+        });
+      }
     }
     // Optional: log AFTER user exists
-    console.log('AppContext user:', {
+    console.log('AppContext user:', user ? {
       companyId: user.companyId,
       activeLocation: user.activeLocation,
       type: user.type,
       email: user.email
-    });
-    console.log('Request cookies check:', {
+    } : 'No encrypted user data provided');
+    console.log('Request cookies debug:', {
       hasPendingTokens: !!req.signedCookies?.ghl_pending_tokens,
       hasGHLLocation: !!req.signedCookies?.ghl_location,
-      cookieKeys: Object.keys(req.signedCookies || {})
+      signedCookieKeys: Object.keys(req.signedCookies || {}),
+      regularCookieKeys: Object.keys(req.cookies || {}),
+      rawCookieHeader: req.headers.cookie || 'none',
+      cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing',
+      headers: {
+        userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
+        referer: req.headers.referer || 'none'
+      }
     });
+
+// Get cookie location once for reuse
+const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
+
+// Try to access pending tokens from both signed and unsigned cookies for debugging
+const pendingTokens = req.signedCookies?.ghl_pending_tokens || req.cookies?.ghl_pending_tokens || null;
+if (pendingTokens) {
+  console.log('Found pending tokens in cookies:', {
+    source: req.signedCookies?.ghl_pending_tokens ? 'signed' : 'unsigned',
+    length: pendingTokens.length
+  });
+}
+
 // (NEW) 2.5) If FE provides an activeLocation and we have pending tokens from OAuth, finish the install now
-if (user.activeLocation && req.signedCookies?.ghl_pending_tokens) {
+if (user?.activeLocation && pendingTokens) {
   try {
     console.log(`Found pending tokens for user with activeLocation: ${user.activeLocation}`);
     const bytes = CryptoJS.AES.decrypt(
-      req.signedCookies.ghl_pending_tokens,
+      pendingTokens,
       process.env.APP_SECRET || 'dev-secret-change-me-in-production'
     );
     const str = bytes.toString(CryptoJS.enc.Utf8);
@@ -111,14 +133,58 @@ if (user.activeLocation && req.signedCookies?.ghl_pending_tokens) {
     console.warn('Failed to consume pending tokens:', e?.message || e);
   }
 }
-// 3) Enforce cookie vs activeLocation
-    const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
-if (user.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
+
+// (NEW) 2.6) If we have pending tokens but no user activeLocation, check query params or cookie for locationId
+if (!user?.activeLocation && pendingTokens) {
+  console.log('Have pending tokens but no user activeLocation, checking query params and cookies...');
+
+  // Try to get locationId from query parameter or cookie
+  const fallbackLocationId = req.query.locationId || req.body.locationId || cookieLocation;
+
+  if (fallbackLocationId) {
+    console.log(`Using fallback locationId: ${fallbackLocationId} for pending token consumption`);
+
+    try {
+      const bytes = CryptoJS.AES.decrypt(
+        pendingTokens,
+        process.env.APP_SECRET || 'dev-secret-change-me-in-production'
+      );
+      const str = bytes.toString(CryptoJS.enc.Utf8);
+      const pending = JSON.parse(str || '{}');
+
+      if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
+        console.log(`Consuming pending tokens for fallback locationId: ${fallbackLocationId}`);
+        await installs.set(fallbackLocationId, {
+          access_token: pending.access_token,
+          refresh_token: pending.refresh_token,
+          expires_at: pending.expires_at
+        });
+
+        // Clear the pending cookie and set normal auth cookie
+        res.clearCookie('ghl_pending_tokens', {
+          domain: process.env.COOKIE_DOMAIN || undefined,
+          path: '/',
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'none',
+          signed: true
+        });
+        setAuthCookie(res, fallbackLocationId);
+        console.log(`✅ Pending tokens consumed successfully for fallback ${fallbackLocationId}`);
+      }
+    } catch (e) {
+      console.warn('Failed to consume pending tokens with fallback locationId:', e?.message || e);
+    }
+  }
+}
+
+// 3) Enforce cookie vs activeLocation (only if user data is available)
+if (user?.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
   // Check if we have an installation for the new location
   if (await installs.has(user.activeLocation)) {
     // Update cookie to new location
 setAuthCookie(res, user.activeLocation);
-    
+
     console.log(`Location switched: ${cookieLocation} → ${user.activeLocation}`);
   } else {
     // New location doesn't have the app installed
@@ -130,17 +196,19 @@ setAuthCookie(res, user.activeLocation);
   }
 }
     // If no cookie but we have an install for activeLocation, set it
-    if (user.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
+    if (user?.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
 setAuthCookie(res, user.activeLocation);
 }
-    // 4) Location details (UI friendly)
+    // 4) Location details (UI friendly) - determine location from user or cookie
     let location = null;
-    if (user.activeLocation && await installs.has(user.activeLocation)) {
+    const locationId = user?.activeLocation || cookieLocation;
+
+    if (locationId && await installs.has(locationId)) {
       try {
-const install = await installs.get(user.activeLocation);
+const install = await installs.get(locationId);
 if (!install?.access_token) throw new Error('No tokens for this location');
 const { data: loc } = await axios.get(
-  `${API_BASE}/locations/${encodeURIComponent(user.activeLocation)}`,
+  `${API_BASE}/locations/${encodeURIComponent(locationId)}`,
   {
     headers: {
       Authorization: `Bearer ${install.access_token}`,
@@ -151,7 +219,7 @@ const { data: loc } = await axios.get(
   }
 );
           location = {
-          id: user.activeLocation,
+          id: locationId,
           name: loc.name || null,
           companyName: loc.companyName || null,
           logoUrl: loc.logoUrl || null,
@@ -162,8 +230,8 @@ const { data: loc } = await axios.get(
 
         // If JWT is invalid, clear the installation
         if (e?.response?.status === 401 && e?.response?.data?.message === 'Invalid JWT') {
-          console.log(`Clearing invalid installation for ${user.activeLocation}`);
-          await installs.delete(user.activeLocation);
+          console.log(`Clearing invalid installation for ${locationId}`);
+          await installs.delete(locationId);
         }
       }
     }
@@ -278,6 +346,18 @@ router.post('/dev/set-location/:locationId', async (req, res) => {
   );
 
   res.json({ ok: true, locationId });
+});
+
+// Debug endpoint to check cookies
+router.get('/debug-cookies', (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.status(404).end();
+
+  res.json({
+    signedCookies: req.signedCookies || {},
+    regularCookies: req.cookies || {},
+    rawCookieHeader: req.headers.cookie || 'none',
+    cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing'
+  });
 });
 
 export default router;

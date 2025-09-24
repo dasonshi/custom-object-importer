@@ -277,6 +277,17 @@ if (!locationId) {
   });
 
   console.log('Pending tokens cookie set with domain:', process.env.COOKIE_DOMAIN || 'default');
+  console.log('Pending tokens cookie configuration:', {
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    path: '/',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+    signed: true,
+    maxAge: 5 * 60 * 1000,
+    cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing',
+    encryptedPayloadLength: encrypted.length
+  });
 
   return res.redirect('/launch');
 }
@@ -313,13 +324,19 @@ return res.redirect(`https://app.gohighlevel.com/v2/location/${locationId}/custo
 // Uninstall webhook handler
 app.post('/oauth/uninstall', express.json(), async (req, res) => {
   try {
-    const { locationId, companyId } = req.body;
+    const { type, appId, locationId, companyId } = req.body;
 
-    console.log(`Uninstall webhook received for locationId: ${locationId}, companyId: ${companyId}`);
+    console.log(`Uninstall webhook received:`, { type, appId, locationId, companyId });
 
-    if (locationId) {
-      await installs.delete(locationId);
-      console.log(`Successfully removed installation for ${locationId}`);
+    if (type === 'UNINSTALL') {
+      if (locationId) {
+        await installs.delete(locationId);
+        console.log(`✅ Removed location installation: ${locationId}`);
+      } else if (companyId) {
+        // For agency-level uninstalls, we'd need to remove all locations for this company
+        // This would require tracking company->location mapping, which we don't currently do
+        console.log(`⚠️ Agency-level uninstall for company ${companyId} - manual cleanup may be needed`);
+      }
     }
 
     res.json({ success: true, message: 'Uninstall processed' });
