@@ -90,11 +90,14 @@ if (user.activeLocation && req.signedCookies?.ghl_pending_tokens) {
 
       // Clear the pending cookie and set normal auth cookie
       res.clearCookie('ghl_pending_tokens', {
+        domain: process.env.COOKIE_DOMAIN || undefined,
+        path: '/',
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'none',
         signed: true
       });
+      console.log('Pending tokens cookie cleared after consumption');
       setAuthCookie(res, user.activeLocation);
       console.log(`✅ Pending tokens consumed successfully for ${user.activeLocation}`);
     } else {

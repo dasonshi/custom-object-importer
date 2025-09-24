@@ -267,12 +267,16 @@ if (!locationId) {
   const encrypted = CryptoJS.AES.encrypt(payload, process.env.APP_SECRET || 'dev-secret-change-me-in-production').toString();
 
   res.cookie('ghl_pending_tokens', encrypted, {
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    path: '/',
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'none',
     signed: true,
     maxAge: 5 * 60 * 1000 // 5 minutes
   });
+
+  console.log('Pending tokens cookie set with domain:', process.env.COOKIE_DOMAIN || 'default');
 
   return res.redirect('/launch');
 }
