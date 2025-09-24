@@ -32,6 +32,7 @@ router.post('/decrypt-user-data', express.json(), async (req, res) => {
 
 // App context endpoint
 router.post('/app-context', express.json(), async (req, res) => {
+  console.log('🚀 APP-CONTEXT ENDPOINT HIT - Request received');
   try {
     const { encryptedData } = req.body;
     // 1) Validate payload - allow empty encryptedData for cases where we don't have encrypted context
@@ -41,6 +42,9 @@ router.post('/app-context', express.json(), async (req, res) => {
         message: 'Encrypted user data must be a string (can be empty)'
       });
     }
+
+    console.log('🔍 Processing app-context request with encryptedData:', encryptedData ? 'provided' : 'empty');
+
     // 2) Decrypt user (if encryptedData is provided)
     let user = null;
     if (encryptedData && encryptedData.trim().length > 0) {
