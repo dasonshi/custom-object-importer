@@ -46,6 +46,13 @@ router.get('/agency-branding', requireAuth, async (req, res) => {
 
   } catch (e) {
     console.error('Agency branding fetch error:', e?.response?.data || e.message);
+
+    // If JWT is invalid, clear the installation
+    if (e?.response?.status === 401 && e?.response?.data?.message === 'Invalid JWT') {
+      console.log(`Clearing invalid installation for ${locationId}`);
+      await installs.delete(locationId);
+    }
+
     res.json({
       companyName: 'HighLevel',
       logoUrl: null,

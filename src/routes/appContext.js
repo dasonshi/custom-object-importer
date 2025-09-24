@@ -139,6 +139,12 @@ const { data: loc } = await axios.get(
         };
       } catch (e) {
         console.warn('Location fetch failed:', e?.response?.status, e?.response?.data || e.message);
+
+        // If JWT is invalid, clear the installation
+        if (e?.response?.status === 401 && e?.response?.data?.message === 'Invalid JWT') {
+          console.log(`Clearing invalid installation for ${user.activeLocation}`);
+          await installs.delete(user.activeLocation);
+        }
       }
     }
 res.json({ user, location });

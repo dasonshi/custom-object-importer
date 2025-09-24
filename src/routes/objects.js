@@ -37,6 +37,13 @@ router.get('/', requireAuth, handleLocationOverride, async (req, res) => {
     });
   } catch (e) {
     console.error('objects lookup error:', e?.response?.status, e?.response?.data || e.message);
+
+    // If JWT is invalid, clear the installation
+    if (e?.response?.status === 401 && e?.response?.data?.message === 'Invalid JWT') {
+      console.log(`Clearing invalid installation for ${locationId}`);
+      await installs.delete(locationId);
+    }
+
     res.status(500).json({ error: 'Lookup failed', details: e?.response?.data || e.message });
   }
 });

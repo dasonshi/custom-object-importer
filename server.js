@@ -304,6 +304,25 @@ return res.redirect(`https://app.gohighlevel.com/v2/location/${locationId}/custo
   }
 });
 
+// Uninstall webhook handler
+app.post('/oauth/uninstall', express.json(), async (req, res) => {
+  try {
+    const { locationId, companyId } = req.body;
+
+    console.log(`Uninstall webhook received for locationId: ${locationId}, companyId: ${companyId}`);
+
+    if (locationId) {
+      await installs.delete(locationId);
+      console.log(`Successfully removed installation for ${locationId}`);
+    }
+
+    res.json({ success: true, message: 'Uninstall processed' });
+  } catch (e) {
+    console.error('Uninstall webhook error:', e.message);
+    res.status(500).json({ error: 'Failed to process uninstall' });
+  }
+});
+
 // Fields import route moved to src/routes/imports/index.js
 // Get object schema by key (proxied to GHL)
 // FE calls: GET /api/objects/:objectKey/schema?fetchProperties=true[&locationId=...]

@@ -46,6 +46,14 @@ export async function withAccessToken(locationId) {
       return refreshed.access_token;
     } catch (e) {
       console.error(`Token refresh failed for ${locationId}:`, e?.response?.data || e.message);
+
+      // If refresh fails with invalid_grant, the installation is likely stale
+      // Clear it so the user can reinstall
+      if (e?.response?.data?.error === 'invalid_grant') {
+        console.log(`Clearing stale installation for ${locationId}`);
+        await installs.delete(locationId);
+      }
+
       throw new Error('Failed to refresh access token');
     }
   }
