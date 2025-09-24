@@ -126,6 +126,8 @@ const allowedRegexes = [
   /^https:\/\/[a-f0-9-]+\.sandbox\.lovable\.dev$/i,
   // new preview domains (handles preview--*, id-preview--*, nested, etc.)
   /^https:\/\/([a-z0-9-]+\.)*lovable\.app$/i,
+  // Lovable project domains
+  /^https:\/\/([a-z0-9-]+\.)*lovableproject\.com$/i,
 ];
 
 function isAllowedOrigin(origin) {
