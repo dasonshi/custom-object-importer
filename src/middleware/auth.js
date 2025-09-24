@@ -51,7 +51,9 @@ export async function requireAuth(req, res, next) {
       setAuthCookie(res, override);
       locationId = override;
     } else {
-      return res.status(403).json({ error: 'invalid_location', message: 'Unknown or uninstalled locationId' });
+      // Clear old cookies and return auth required instead of forbidden
+      clearAuthCookie(res);
+      return res.status(401).json({ error: 'Authentication required', message: 'Please complete OAuth setup first' });
     }
   }
 

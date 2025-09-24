@@ -95,9 +95,16 @@ export class InstallsDB {
 
   // Delete installation (for uninstall)
   async delete(locationId) {
-    await this.prisma.install.delete({
-      where: { locationId }
-    });
+    try {
+      await this.prisma.install.delete({
+        where: { locationId }
+      });
+    } catch (e) {
+      // Ignore if record doesn't exist (P2025 error)
+      if (e.code !== 'P2025') {
+        throw e;
+      }
+    }
   }
 
   // List all installations (for admin/debug)
