@@ -15,7 +15,18 @@ model Install {
   expiresAt    BigInt   @map("expires_at")    // Store as timestamp
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
-  
+
   @@map("installs")
   @@index([locationId])
+}
+
+model AgencyInstall {
+  id            String   @id @default(cuid())
+  companyId     String   @unique @map("company_id")
+  encryptedData String   @map("encrypted_data")  // Encrypted JSON with agency tokens and locations
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("agency_installs")
+  @@index([companyId])
 }

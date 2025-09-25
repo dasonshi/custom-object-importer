@@ -34,7 +34,9 @@ router.post('/decrypt-user-data', express.json(), async (req, res) => {
 router.post('/app-context', express.json(), async (req, res) => {
   console.log('🚀 APP-CONTEXT ENDPOINT HIT - Request received');
   try {
-    const { encryptedData } = req.body;
+    const { encryptedData, locationId } = req.body;
+    const queryLocationId = req.query.locationId;
+    const targetLocationId = locationId || queryLocationId;
     // 1) Validate payload - allow empty encryptedData for cases where we don't have encrypted context
     if (typeof encryptedData !== 'string') {
       return res.status(422).json({
@@ -44,6 +46,13 @@ router.post('/app-context', express.json(), async (req, res) => {
     }
 
     console.log('🔍 Processing app-context request with encryptedData:', encryptedData ? 'provided' : 'empty');
+    console.log('🎯 Target locationId:', targetLocationId || 'not provided');
+
+    // Fast path: if location already has tokens, proceed normally
+    if (targetLocationId && await installs.has(targetLocationId)) {
+      console.log('✅ Location already has tokens, proceeding with normal flow');
+      // Continue with normal flow below...
+    }
 
     // 2) Decrypt user (if encryptedData is provided)
     let user = null;
@@ -62,6 +71,39 @@ router.post('/app-context', express.json(), async (req, res) => {
         });
       }
     }
+
+    // Slow path: check for agency bulk installation to consume
+    if (targetLocationId && !await installs.has(targetLocationId) && user?.companyId) {
+      console.log('🔍 Checking for agency bulk installation to consume');
+
+      const pendingAgency = await installs.getAgencyInstallByCompanyId(user.companyId);
+
+      if (pendingAgency && pendingAgency.locations?.some(l => l.id === targetLocationId)) {
+        console.log('🎯 Found matching agency installation for location:', targetLocationId);
+
+        // Store the agency token for this location
+        await installs.set(targetLocationId, {
+          access_token: pendingAgency.agency_access_token,
+          refresh_token: pendingAgency.agency_refresh_token,
+          expires_at: pendingAgency.agency_expires_at,
+          isBulkInstallation: true,
+          userType: pendingAgency.userType,
+          companyId: user.companyId
+        });
+
+        console.log('✅ Agency installation consumed for location:', targetLocationId);
+
+        // Optional: Clean up the agency installation if all locations have been consumed
+        // For now, we'll leave it for future locations
+      } else if (targetLocationId) {
+        console.log('❌ No agency installation found for location:', targetLocationId);
+        return res.status(422).json({
+          error: 'app_not_installed',
+          message: `App not installed for location ${targetLocationId}`,
+          redirectUrl: '/oauth/install'
+        });
+      }
+    }
     // Optional: log AFTER user exists
     console.log('AppContext user:', user ? {
       companyId: user.companyId,
@@ -70,7 +112,6 @@ router.post('/app-context', express.json(), async (req, res) => {
       email: user.email
     } : 'No encrypted user data provided');
     console.log('Request cookies debug:', {
-      hasPendingTokens: !!req.signedCookies?.ghl_pending_tokens,
       hasGHLLocation: !!req.signedCookies?.ghl_location,
       signedCookieKeys: Object.keys(req.signedCookies || {}),
       regularCookieKeys: Object.keys(req.cookies || {}),
@@ -82,205 +123,8 @@ router.post('/app-context', express.json(), async (req, res) => {
       }
     });
 
-// Get cookie location once for reuse
-const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
-
-// Try to access pending tokens from both signed and unsigned cookies for debugging
-const pendingTokens = req.signedCookies?.ghl_pending_tokens || req.cookies?.ghl_pending_tokens || null;
-if (pendingTokens) {
-  console.log('Found pending tokens in cookies:', {
-    source: req.signedCookies?.ghl_pending_tokens ? 'signed' : 'unsigned',
-    length: pendingTokens.length
-  });
-}
-
-// (NEW) 2.5) If FE provides an activeLocation and we have pending tokens from OAuth, finish the install now
-if (user?.activeLocation && pendingTokens) {
-  try {
-    console.log(`Found pending tokens for user with activeLocation: ${user.activeLocation}`);
-    const bytes = CryptoJS.AES.decrypt(
-      pendingTokens,
-      process.env.APP_SECRET || 'dev-secret-change-me-in-production'
-    );
-    const str = bytes.toString(CryptoJS.enc.Utf8);
-    const pending = JSON.parse(str || '{}');
-    console.log('Pending tokens structure:', pending ? 'Valid' : 'Invalid');
-
-    if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
-      console.log(`Consuming pending tokens and saving to location: ${user.activeLocation}`);
-
-      // Handle both standard and bulk installation tokens
-      const tokenData = {
-        access_token: pending.access_token,
-        refresh_token: pending.refresh_token,
-        expires_at: pending.expires_at
-      };
-
-      // Add metadata for bulk installations
-      if (pending?.isBulkInstallation) {
-        tokenData.isBulkInstallation = true;
-        tokenData.userType = pending.userType;
-        tokenData.companyId = pending.companyId;
-      }
-
-      await installs.set(user.activeLocation, tokenData);
-
-      // Clear the pending cookie and set normal auth cookie
-      res.clearCookie('ghl_pending_tokens', {
-        domain: process.env.COOKIE_DOMAIN || undefined,
-        path: '/',
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'none',
-        signed: true
-      });
-      console.log('Pending tokens cookie cleared after consumption');
-      setAuthCookie(res, user.activeLocation);
-      console.log(`✅ Pending tokens consumed successfully for ${user.activeLocation}`);
-    } else {
-      console.warn('Pending tokens missing required fields:', {
-        hasAccessToken: !!pending?.access_token,
-        hasRefreshToken: !!pending?.refresh_token,
-        hasExpiresAt: !!pending?.expires_at
-      });
-    }
-  } catch (e) {
-    console.warn('Failed to consume pending tokens:', e?.message || e);
-  }
-}
-
-// (NEW) 2.6) If we have pending tokens but no user activeLocation, check query params or cookie for locationId
-if (!user?.activeLocation && pendingTokens) {
-  console.log('Have pending tokens but no user activeLocation, checking query params and cookies...');
-
-  // Try to get locationId from query parameter or cookie
-  let fallbackLocationId = req.query.locationId || req.body.locationId || cookieLocation;
-
-  // If no fallbackLocationId provided, try to detect it from HighLevel API using the access token
-  if (!fallbackLocationId) {
-    try {
-      console.log('No fallbackLocationId found, attempting to detect from HighLevel API...');
-      const bytes = CryptoJS.AES.decrypt(
-        pendingTokens,
-        process.env.APP_SECRET || 'dev-secret-change-me-in-production'
-      );
-      const str = bytes.toString(CryptoJS.enc.Utf8);
-      const pending = JSON.parse(str || '{}');
-
-      if (pending?.access_token) {
-        // Try to get user info from HighLevel API to determine locationId
-        try {
-          // Try the HighLevel /me endpoint to get current user's location context
-          const response = await axios.get(`${API_BASE}/me`, {
-            headers: {
-              Authorization: `Bearer ${pending.access_token}`,
-              Version: '2021-07-28',
-              Accept: 'application/json'
-            },
-            timeout: 10000,
-          });
-
-          console.log('HighLevel /me API response:', {
-            status: response.status,
-            hasData: !!response.data,
-            dataKeys: response.data ? Object.keys(response.data) : []
-          });
-
-          // Try to extract locationId from the /me response
-          // This might be in response.data.locationId or response.data.currentLocationId
-          const detectedLocationId = response.data?.locationId ||
-                                     response.data?.currentLocationId ||
-                                     response.data?.location?.id ||
-                                     (response.data?.locations && response.data.locations[0]?.id);
-
-          if (detectedLocationId) {
-            fallbackLocationId = detectedLocationId;
-            console.log(`✅ Detected locationId from HighLevel /me API: ${fallbackLocationId}`);
-          }
-        } catch (apiError) {
-          console.log('HighLevel API call failed:', apiError?.response?.status, apiError?.response?.data || apiError.message);
-        }
-      }
-
-      console.log('Pending token payload:', {
-        hasAccessToken: !!pending?.access_token,
-        hasRefreshToken: !!pending?.refresh_token,
-        hasExpiresAt: !!pending?.expires_at,
-        isBulkInstallation: pending?.isBulkInstallation || false,
-        userType: pending?.userType || 'unknown',
-        installedLocationCount: pending?.installedLocations?.length || 0,
-        detectedLocationId: fallbackLocationId || 'none'
-      });
-
-      // If this is a bulk installation, try to use the user's activeLocation if it's in the installed list
-      if (pending?.isBulkInstallation && pending?.installedLocations && user?.activeLocation) {
-        const matchingLocation = pending.installedLocations.find(loc => loc.id === user.activeLocation);
-        if (matchingLocation) {
-          console.log(`🎯 Found activeLocation ${user.activeLocation} in bulk installation list`);
-          fallbackLocationId = user.activeLocation;
-        } else {
-          console.log(`❌ ActiveLocation ${user.activeLocation} not found in bulk installation list:`, pending.installedLocations.map(l => l.id));
-        }
-      }
-
-      // If still no fallback and we have bulk installation locations, use the first one
-      if (!fallbackLocationId && pending?.installedLocations?.length > 0) {
-        fallbackLocationId = pending.installedLocations[0].id;
-        console.log(`📍 Using first bulk installation location: ${fallbackLocationId} (${pending.installedLocations[0].name})`);
-      }
-    } catch (e) {
-      console.warn('Failed to inspect pending tokens:', e?.message || e);
-    }
-  }
-
-  if (fallbackLocationId) {
-    console.log(`Using fallback locationId: ${fallbackLocationId} for pending token consumption`);
-
-    try {
-      const bytes = CryptoJS.AES.decrypt(
-        pendingTokens,
-        process.env.APP_SECRET || 'dev-secret-change-me-in-production'
-      );
-      const str = bytes.toString(CryptoJS.enc.Utf8);
-      const pending = JSON.parse(str || '{}');
-
-      if (pending?.access_token && pending?.refresh_token && pending?.expires_at) {
-        console.log(`Consuming pending tokens for fallback locationId: ${fallbackLocationId}`);
-
-        // For bulk installations, we need to handle agency tokens differently
-        // For now, we'll store the agency token but mark it as such
-        const tokenData = {
-          access_token: pending.access_token,
-          refresh_token: pending.refresh_token,
-          expires_at: pending.expires_at
-        };
-
-        // Add metadata for bulk installations
-        if (pending?.isBulkInstallation) {
-          tokenData.isBulkInstallation = true;
-          tokenData.userType = pending.userType;
-          tokenData.companyId = pending.companyId;
-        }
-
-        await installs.set(fallbackLocationId, tokenData);
-
-        // Clear the pending cookie and set normal auth cookie
-        res.clearCookie('ghl_pending_tokens', {
-          domain: process.env.COOKIE_DOMAIN || undefined,
-          path: '/',
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'none',
-          signed: true
-        });
-        setAuthCookie(res, fallbackLocationId);
-        console.log(`✅ Pending tokens consumed successfully for fallback ${fallbackLocationId}`);
-      }
-    } catch (e) {
-      console.warn('Failed to consume pending tokens with fallback locationId:', e?.message || e);
-    }
-  }
-}
+    // Get cookie location for existing auth flows
+    const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 
 // 3) Enforce cookie vs activeLocation (only if user data is available)
 if (user?.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {

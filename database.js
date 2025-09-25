@@ -107,6 +107,77 @@ export class InstallsDB {
     }
   }
 
+  // Encrypt data (generic encryption for JSON data)
+  encrypt(data) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.encKey, iv);
+    const encrypted = Buffer.concat([cipher.update(Buffer.from(data, 'utf8')), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([iv, tag, encrypted]).toString('base64');
+  }
+
+  // Decrypt data (generic decryption for JSON data)
+  decrypt(encryptedData) {
+    const buffer = Buffer.from(encryptedData, 'base64');
+    const iv = buffer.subarray(0, 12);
+    const tag = buffer.subarray(12, 28);
+    const encrypted = buffer.subarray(28);
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', this.encKey, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+  }
+
+  // Agency installation storage for bulk installs
+  async saveAgencyInstall(companyId, agencyData) {
+    const encryptedData = this.encrypt(JSON.stringify(agencyData));
+
+    await this.prisma.agencyInstall.upsert({
+      where: { companyId },
+      update: {
+        encryptedData,
+        updatedAt: new Date()
+      },
+      create: {
+        companyId,
+        encryptedData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    });
+  }
+
+  // Get agency installation by company ID
+  async getAgencyInstallByCompanyId(companyId) {
+    try {
+      const record = await this.prisma.agencyInstall.findUnique({
+        where: { companyId }
+      });
+
+      if (!record) return null;
+
+      const decryptedData = this.decrypt(record.encryptedData);
+      return JSON.parse(decryptedData);
+    } catch (e) {
+      console.error('Failed to retrieve agency install:', e);
+      return null;
+    }
+  }
+
+  // Clean up agency installation after consumption
+  async deleteAgencyInstall(companyId) {
+    try {
+      await this.prisma.agencyInstall.delete({
+        where: { companyId }
+      });
+    } catch (e) {
+      // Ignore if record doesn't exist
+      if (e.code !== 'P2025') {
+        throw e;
+      }
+    }
+  }
+
   // List all installations (for admin/debug)
   async list() {
     const installs = await this.prisma.install.findMany({

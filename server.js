@@ -289,37 +289,34 @@ if (!locationId) {
       console.log('📍 Installed locations response:', {
         status: locationsResponse.status,
         locationCount: locationsResponse.data?.locations?.length || 0,
-        locations: locationsResponse.data?.locations?.map(loc => ({ id: loc._id, name: loc.name })) || []
+        locations: locationsResponse.data?.locations?.map(loc => ({ id: loc._id, name: loc.name, isInstalled: loc.isInstalled })) || []
       });
 
-      const installedLocations = locationsResponse.data?.locations?.filter(loc => loc.isInstalled) || [];
+      // Debug: Check what isInstalled values we're getting
+      const allLocations = locationsResponse.data?.locations || [];
+      console.log('🔍 Location isInstalled values:', allLocations.map(loc => ({
+        id: loc._id,
+        name: loc.name,
+        isInstalled: loc.isInstalled,
+        hasIsInstalledProp: loc.hasOwnProperty('isInstalled')
+      })));
+
+      const installedLocations = allLocations.filter(loc => loc.isInstalled) || [];
+
+      console.log('✅ Filtered installed locations:', installedLocations.length, 'out of', allLocations.length, 'total locations');
 
       if (installedLocations.length > 0) {
-        // For bulk installs, we need to get location tokens for each installed location
-        // For now, let's store the agency token and installed locations info for later processing
-        const payload = JSON.stringify({
-          access_token,
-          refresh_token,
-          expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
+        // Store agency installation data in database instead of cookies
+        await installs.saveAgencyInstall(companyId, {
+          agency_access_token: access_token,
+          agency_refresh_token: refresh_token,
+          agency_expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
           isBulkInstallation: true,
           userType,
-          companyId,
-          installedLocations: installedLocations.map(loc => ({ id: loc._id, name: loc.name }))
+          locations: installedLocations.map(loc => ({ id: loc._id, name: loc.name }))
         });
 
-        const encrypted = CryptoJS.AES.encrypt(payload, process.env.APP_SECRET || 'dev-secret-change-me-in-production').toString();
-
-        res.cookie('ghl_pending_tokens', encrypted, {
-          domain: process.env.COOKIE_DOMAIN || undefined,
-          path: '/',
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'none',
-          signed: true,
-          maxAge: 5 * 60 * 1000 // 5 minutes
-        });
-
-        console.log('🍪 Bulk installation tokens stored with', installedLocations.length, 'locations');
+        console.log('💾 Bulk installation stored in database with', installedLocations.length, 'locations');
         return res.redirect('/launch');
       } else {
         console.log('⚠️ No installed locations found for bulk installation');
@@ -328,43 +325,13 @@ if (!locationId) {
 
     } catch (error) {
       console.error('❌ Failed to fetch installed locations:', error?.response?.status, error?.response?.data || error.message);
-      // Fall back to pending tokens approach
+      return res.redirect('/launch?error=api_failed');
     }
   }
 
-  // Standard pending tokens approach (for non-bulk or fallback)
-  const payload = JSON.stringify({
-    access_token,
-    refresh_token,
-    expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
-  });
-
-  const encrypted = CryptoJS.AES.encrypt(payload, process.env.APP_SECRET || 'dev-secret-change-me-in-production').toString();
-
-  res.cookie('ghl_pending_tokens', encrypted, {
-    domain: process.env.COOKIE_DOMAIN || undefined,
-    path: '/',
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-    signed: true,
-    maxAge: 5 * 60 * 1000 // 5 minutes
-  });
-
-  console.log('Pending tokens cookie set with domain:', process.env.COOKIE_DOMAIN || 'default');
-  console.log('Pending tokens cookie configuration:', {
-    domain: process.env.COOKIE_DOMAIN || undefined,
-    path: '/',
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-    signed: true,
-    maxAge: 5 * 60 * 1000,
-    cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing',
-    encryptedPayloadLength: encrypted.length
-  });
-
-  return res.redirect('/launch');
+  // For non-bulk installations, this should not happen in marketplace installs
+  console.log('⚠️ Non-bulk installation without locationId - this should not happen in marketplace installs');
+  return res.redirect('/launch?error=no_location_id');
 }
 
 // Normal case: we have locationId, save and set cookies
