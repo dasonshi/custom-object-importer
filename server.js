@@ -319,7 +319,8 @@ if (!locationId) {
 
             // Use HighLevel's API to get location-specific tokens
             const locationTokenResponse = await axios.post(`${API_BASE}/oauth/locationToken`, {
-              locationId: location._id
+              locationId: location._id,
+              companyId: companyId
             }, {
               headers: {
                 Authorization: `Bearer ${access_token}`,
