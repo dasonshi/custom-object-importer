@@ -73,16 +73,18 @@ router.post('/app-context', express.json(), async (req, res) => {
     }
 
     // Slow path: check for agency bulk installation to consume
-    if (targetLocationId && !await installs.has(targetLocationId) && user?.companyId) {
-      console.log('🔍 Checking for agency bulk installation to consume');
+    const locationToCheck = targetLocationId || user?.activeLocation;
+
+    if (locationToCheck && !await installs.has(locationToCheck) && user?.companyId) {
+      console.log('🔍 Checking for agency bulk installation to consume for location:', locationToCheck);
 
       const pendingAgency = await installs.getAgencyInstallByCompanyId(user.companyId);
 
-      if (pendingAgency && pendingAgency.locations?.some(l => l.id === targetLocationId)) {
-        console.log('🎯 Found matching agency installation for location:', targetLocationId);
+      if (pendingAgency && pendingAgency.locations?.some(l => l.id === locationToCheck)) {
+        console.log('🎯 Found matching agency installation for location:', locationToCheck);
 
         // Store the agency token for this location
-        await installs.set(targetLocationId, {
+        await installs.set(locationToCheck, {
           access_token: pendingAgency.agency_access_token,
           refresh_token: pendingAgency.agency_refresh_token,
           expires_at: pendingAgency.agency_expires_at,
@@ -91,15 +93,15 @@ router.post('/app-context', express.json(), async (req, res) => {
           companyId: user.companyId
         });
 
-        console.log('✅ Agency installation consumed for location:', targetLocationId);
+        console.log('✅ Agency installation consumed for location:', locationToCheck);
 
         // Optional: Clean up the agency installation if all locations have been consumed
         // For now, we'll leave it for future locations
-      } else if (targetLocationId) {
-        console.log('❌ No agency installation found for location:', targetLocationId);
+      } else if (locationToCheck) {
+        console.log('❌ No agency installation found for location:', locationToCheck);
         return res.status(422).json({
           error: 'app_not_installed',
-          message: `App not installed for location ${targetLocationId}`,
+          message: `App not installed for location ${locationToCheck}`,
           redirectUrl: '/oauth/install'
         });
       }
