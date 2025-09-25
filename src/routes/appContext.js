@@ -149,14 +149,14 @@ setAuthCookie(res, user.activeLocation);
 }
     // 4) Location details (UI friendly) - determine location from user or cookie
     let location = null;
-    const locationId = user?.activeLocation || cookieLocation;
+    const currentLocationId = user?.activeLocation || cookieLocation;
 
-    if (locationId && await installs.has(locationId)) {
+    if (currentLocationId && await installs.has(currentLocationId)) {
       try {
-const install = await installs.get(locationId);
+const install = await installs.get(currentLocationId);
 if (!install?.access_token) throw new Error('No tokens for this location');
 const { data: loc } = await axios.get(
-  `${API_BASE}/locations/${encodeURIComponent(locationId)}`,
+  `${API_BASE}/locations/${encodeURIComponent(currentLocationId)}`,
   {
     headers: {
       Authorization: `Bearer ${install.access_token}`,
@@ -167,7 +167,7 @@ const { data: loc } = await axios.get(
   }
 );
           location = {
-          id: locationId,
+          id: currentLocationId,
           name: loc.name || null,
           companyName: loc.companyName || null,
           logoUrl: loc.logoUrl || null,
@@ -178,8 +178,8 @@ const { data: loc } = await axios.get(
 
         // If JWT is invalid, clear the installation
         if (e?.response?.status === 401 && e?.response?.data?.message === 'Invalid JWT') {
-          console.log(`Clearing invalid installation for ${locationId}`);
-          await installs.delete(locationId);
+          console.log(`Clearing invalid installation for ${currentLocationId}`);
+          await installs.delete(currentLocationId);
         }
       }
     }
