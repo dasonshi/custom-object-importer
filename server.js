@@ -257,7 +257,10 @@ if (typeof state === 'string' && state.length > 0) {
     console.log('IsBulkInstallation:', tokenResp?.isBulkInstallation || false);
     console.log('UserType:', tokenResp?.userType || 'unknown');
     console.log('CompanyId:', tokenResp?.companyId || 'Not found');
-    console.log('All token response fields:', Object.entries(tokenResp || {}).map(([k, v]) => `${k}: ${typeof v === 'string' ? v.substring(0, 20) + (v.length > 20 ? '...' : '') : v}`));
+    console.log('All token response fields:', Object.entries(tokenResp || {}).map(([k, v]) =>
+      k === 'scope' ? `${k}: ${v}` : // Show full scope for debugging
+      `${k}: ${typeof v === 'string' ? v.substring(0, 20) + (v.length > 20 ? '...' : '') : v}`
+    ));
     const { access_token, refresh_token, expires_in, locationId, isBulkInstallation, userType, companyId } = tokenResp || {};
 
 if (!locationId) {

@@ -136,14 +136,25 @@ router.post('/app-context', express.json(), async (req, res) => {
         console.log('🎯 Found matching agency installation for location:', locationToCheck);
 
         // Store the agency token for this location
-        await installs.set(locationToCheck, {
+        const tokenData = {
           access_token: pendingAgency.agency_access_token,
           refresh_token: pendingAgency.agency_refresh_token,
           expires_at: pendingAgency.agency_expires_at,
           isBulkInstallation: true,
           userType: pendingAgency.userType,
           companyId: user.companyId
+        };
+
+        console.log('💾 Storing agency token data:', {
+          hasAccessToken: !!tokenData.access_token,
+          hasRefreshToken: !!tokenData.refresh_token,
+          expiresAt: new Date(tokenData.expires_at).toISOString(),
+          userType: tokenData.userType,
+          isBulkInstallation: tokenData.isBulkInstallation,
+          accessTokenPrefix: tokenData.access_token?.substring(0, 20) + '...'
         });
+
+        await installs.set(locationToCheck, tokenData);
 
         console.log('✅ Agency installation consumed for location:', locationToCheck);
 
