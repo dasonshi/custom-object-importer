@@ -309,17 +309,66 @@ if (!locationId) {
       console.log('✅ Filtered installed locations:', installedLocations.length, 'out of', allLocations.length, 'total locations');
 
       if (installedLocations.length > 0) {
-        // Store agency installation data in database instead of cookies
-        await installs.saveAgencyInstall(companyId, {
-          agency_access_token: access_token,
-          agency_refresh_token: refresh_token,
-          agency_expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
-          isBulkInstallation: true,
-          userType,
-          locations: installedLocations.map(loc => ({ id: loc._id, name: loc.name }))
-        });
+        // For each location, we need to get location-specific tokens
+        // Agency tokens can't access location-specific APIs due to authClass restrictions
+        console.log('🔄 Getting location-specific tokens for', installedLocations.length, 'locations');
 
-        console.log('💾 Bulk installation stored in database with', installedLocations.length, 'locations');
+        for (const location of installedLocations) {
+          try {
+            console.log(`🎯 Getting location token for: ${location.name} (${location._id})`);
+
+            // Use HighLevel's API to get location-specific tokens
+            const locationTokenResponse = await axios.post(`${API_BASE}/oauth/locationToken`, {
+              locationId: location._id
+            }, {
+              headers: {
+                Authorization: `Bearer ${access_token}`,
+                Version: '2021-07-28',
+                Accept: 'application/json'
+              },
+              timeout: 10000,
+            });
+
+            console.log('📍 Location token response:', {
+              status: locationTokenResponse.status,
+              hasAccessToken: !!locationTokenResponse.data?.access_token,
+              hasRefreshToken: !!locationTokenResponse.data?.refresh_token
+            });
+
+            if (locationTokenResponse.data?.access_token) {
+              // Store the location-specific token
+              await installs.set(location._id, {
+                access_token: locationTokenResponse.data.access_token,
+                refresh_token: locationTokenResponse.data.refresh_token,
+                expires_at: Date.now() + ((locationTokenResponse.data.expires_in ?? 3600) * 1000) - 60_000,
+                isBulkInstallation: true,
+                userType: 'Location', // This should be Location type, not Company
+                companyId
+              });
+
+              console.log(`✅ Location token stored for: ${location.name}`);
+            } else {
+              console.log(`❌ No location token received for: ${location.name}`);
+            }
+
+          } catch (error) {
+            console.error(`❌ Failed to get location token for ${location.name}:`, error?.response?.status, error?.response?.data || error.message);
+
+            // Fallback: store agency token but mark it properly
+            console.log(`🔄 Falling back to agency token for: ${location.name}`);
+            await installs.set(location._id, {
+              access_token: access_token,
+              refresh_token: refresh_token,
+              expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
+              isBulkInstallation: true,
+              userType: 'Company', // Agency token
+              companyId,
+              isAgencyToken: true // Flag to indicate this needs special handling
+            });
+          }
+        }
+
+        console.log('💾 Bulk installation processed for', installedLocations.length, 'locations');
         return res.redirect('/launch');
       } else {
         console.log('⚠️ No installed locations found for bulk installation');
