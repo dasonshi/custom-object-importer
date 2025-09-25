@@ -135,26 +135,51 @@ router.post('/app-context', express.json(), async (req, res) => {
       if (pendingAgency && pendingAgency.locations?.some(l => l.id === locationToCheck)) {
         console.log('🎯 Found matching agency installation for location:', locationToCheck);
 
-        // Store the agency token for this location
-        const tokenData = {
-          access_token: pendingAgency.agency_access_token,
-          refresh_token: pendingAgency.agency_refresh_token,
-          expires_at: pendingAgency.agency_expires_at,
-          isBulkInstallation: true,
-          userType: pendingAgency.userType,
-          companyId: user.companyId
-        };
+        // Exchange agency tokens for location-specific tokens
+        console.log('🔄 Exchanging agency tokens for location-specific tokens');
 
-        console.log('💾 Storing agency token data:', {
-          hasAccessToken: !!tokenData.access_token,
-          hasRefreshToken: !!tokenData.refresh_token,
-          expiresAt: new Date(tokenData.expires_at).toISOString(),
-          userType: tokenData.userType,
-          isBulkInstallation: tokenData.isBulkInstallation,
-          accessTokenPrefix: tokenData.access_token?.substring(0, 20) + '...'
-        });
+        try {
+          const locationTokenResponse = await axios.post(`${API_BASE}/oauth/locationToken`, {
+            locationId: locationToCheck,
+            companyId: user.companyId
+          }, {
+            headers: {
+              Authorization: `Bearer ${pendingAgency.agency_access_token}`,
+              'Content-Type': 'application/json'
+            }
+          });
 
-        await installs.set(locationToCheck, tokenData);
+          const { access_token, refresh_token, expires_in } = locationTokenResponse.data;
+
+          // Store the location-specific tokens
+          const tokenData = {
+            access_token,
+            refresh_token,
+            expires_at: Date.now() + (expires_in * 1000),
+            isBulkInstallation: true,
+            userType: pendingAgency.userType,
+            companyId: user.companyId
+          };
+
+          console.log('💾 Storing location-specific token data:', {
+            hasAccessToken: !!tokenData.access_token,
+            hasRefreshToken: !!tokenData.refresh_token,
+            expiresAt: new Date(tokenData.expires_at).toISOString(),
+            userType: tokenData.userType,
+            isBulkInstallation: tokenData.isBulkInstallation,
+            accessTokenPrefix: tokenData.access_token?.substring(0, 20) + '...'
+          });
+
+          await installs.set(locationToCheck, tokenData);
+
+        } catch (tokenExchangeError) {
+          console.error('❌ Failed to exchange agency tokens for location tokens:', tokenExchangeError?.response?.data || tokenExchangeError.message);
+          return res.status(422).json({
+            error: 'token_exchange_failed',
+            message: `Failed to exchange agency tokens for location ${locationToCheck}`,
+            redirectUrl: '/oauth/install'
+          });
+        }
 
         console.log('✅ Agency installation consumed for location:', locationToCheck);
 
