@@ -72,6 +72,58 @@ router.post('/app-context', express.json(), async (req, res) => {
       }
     }
 
+    // Special case: Handle marketplace installs without encrypted user data
+    // This happens when HighLevel doesn't provide encrypted context for marketplace apps
+    if (!user && (!targetLocationId && !cookieLocation)) {
+      console.log('🏪 Marketplace install without encrypted user data - searching for recent agency installations');
+
+      // Try to find the most recent agency installation and consume it
+      // This is a fallback for marketplace installs that don't provide user context
+      try {
+        // We'll need to modify the database to get recent agency installations
+        // For now, let's assume we have a way to get all agency installations
+
+        // Get the first available location from any recent agency installation
+        // This is a temporary solution - ideally we'd have better context
+        const allInstalls = await installs.list();
+        console.log('📋 Current installations:', allInstalls.length);
+
+        if (allInstalls.length === 0) {
+          console.log('❌ No existing installations found for marketplace install fallback');
+          return res.status(422).json({
+            error: 'no_installations',
+            message: 'No app installations found. Please install the app first.',
+            redirectUrl: '/oauth/install'
+          });
+        }
+
+        // Use the most recently updated installation
+        const recentInstall = allInstalls.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))[0];
+        const fallbackLocationId = recentInstall.locationId;
+
+        console.log('🎯 Using fallback location from recent install:', fallbackLocationId);
+        setAuthCookie(res, fallbackLocationId);
+
+        // Return minimal context for the fallback location
+        return res.json({
+          user: null,
+          location: {
+            id: fallbackLocationId,
+            name: 'Loading...',
+            fallback: true
+          }
+        });
+
+      } catch (error) {
+        console.error('❌ Failed to handle marketplace install fallback:', error.message);
+        return res.status(422).json({
+          error: 'fallback_failed',
+          message: 'Failed to set up marketplace install. Please try reinstalling.',
+          redirectUrl: '/oauth/install'
+        });
+      }
+    }
+
     // Slow path: check for agency bulk installation to consume
     const locationToCheck = targetLocationId || user?.activeLocation;
 
