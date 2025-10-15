@@ -404,8 +404,8 @@ setAuthCookie(res, locationId);
   );
 }
 
-// Redirect to the app within the HighLevel location
-return res.redirect(`https://app.gohighlevel.com/v2/location/${locationId}/custom-page-link/68b87115d7dcf1e9cc0c80a0`);
+// Redirect to /launch page which sends postMessage and closes the popup
+return res.redirect('/launch');
     
   } catch (e) {
     console.error('OAuth callback error:', e?.response?.status, e?.response?.data || e.message);
