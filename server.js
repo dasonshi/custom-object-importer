@@ -81,7 +81,7 @@ app.get('/oauth/install', (req, res) => {
 
   ].join(' ');
 
-  const url = `https://marketplace.gohighlevel.com/oauth/chooselocation` +
+  const url = `https://marketplace.leadconnectorhq.com/oauth/chooselocation` +
     `?response_type=code` +
     `&client_id=${encodeURIComponent(process.env.GHL_CLIENT_ID)}` +
     `&redirect_uri=${encodeURIComponent(process.env.GHL_REDIRECT_URI)}` +
