@@ -8,6 +8,189 @@ import { API_BASE } from '../services/tokenService.js';
 
 const router = Router();
 
+// Token refresh configuration (matching tokenService.js)
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiry
+const MAX_RETRY_ATTEMPTS = 3;
+const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
+const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+const TOKEN_ROTATION_GRACE_PERIOD_MS = 60 * 60 * 1000; // 1 hour grace period
+
+// Helper function to delay execution
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper function to check if error is retryable
+const isRetryableError = (error) => {
+  const status = error?.response?.status;
+  const errorCode = error?.response?.data?.error;
+  const errorMessage = error?.response?.data?.message || error?.message || '';
+
+  // Network errors are retryable
+  if (!error.response) {
+    console.log('🔄 Network error detected - will retry');
+    return true;
+  }
+
+  // Rate limit errors are retryable
+  if (status === 429) {
+    console.log('⏳ Rate limited - will retry after delay');
+    return true;
+  }
+
+  // Temporary server errors are retryable
+  if (status >= 500 && status < 600) {
+    console.log('🔧 Server error detected - will retry');
+    return true;
+  }
+
+  // Some 401 errors might be temporary
+  if (status === 401 && errorMessage.toLowerCase().includes('temporarily')) {
+    console.log('⏱️ Temporary auth issue - will retry');
+    return true;
+  }
+
+  // invalid_grant is NOT retryable
+  if (errorCode === 'invalid_grant') {
+    console.log('❌ Permanent token failure (invalid_grant) - will not retry');
+    return false;
+  }
+
+  // invalid_client is NOT retryable
+  if (errorCode === 'invalid_client') {
+    console.log('❌ Invalid client credentials - will not retry');
+    return false;
+  }
+
+  return false;
+};
+
+// Function to refresh agency token with retry logic
+async function refreshAgencyTokenWithRetry(pendingAgency, user, attempt = 1) {
+  try {
+    console.log(`🔄 Agency token refresh attempt ${attempt}/${MAX_RETRY_ATTEMPTS} for company ${user.companyId}`);
+
+    const refreshBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: pendingAgency.agency_refresh_token,
+      client_id: process.env.GHL_CLIENT_ID,
+      client_secret: process.env.GHL_CLIENT_SECRET
+    });
+
+    const refreshResponse = await axios.post(`${API_BASE}/oauth/token`, refreshBody, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 30000 // 30 second timeout
+    });
+
+    console.log(`✅ Agency token refresh successful on attempt ${attempt}`);
+    return refreshResponse.data;
+
+  } catch (error) {
+    const isRetryable = isRetryableError(error);
+
+    console.error(`❌ Agency token refresh attempt ${attempt} failed:`, {
+      companyId: user.companyId,
+      status: error?.response?.status,
+      error: error?.response?.data?.error,
+      message: error?.response?.data?.message || error.message,
+      retryable: isRetryable
+    });
+
+    // If not retryable or max attempts reached, throw the error
+    if (!isRetryable || attempt >= MAX_RETRY_ATTEMPTS) {
+      throw error;
+    }
+
+    // Calculate exponential backoff delay
+    const retryDelay = Math.min(
+      INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1),
+      MAX_RETRY_DELAY_MS
+    );
+
+    console.log(`⏳ Retrying agency token refresh in ${retryDelay}ms...`);
+    await delay(retryDelay);
+
+    // Retry with incremented attempt count
+    return refreshAgencyTokenWithRetry(pendingAgency, user, attempt + 1);
+  }
+}
+
+// Helper function to refresh agency tokens if expired
+async function ensureValidAgencyToken(pendingAgency, user) {
+  // Check if token is expired or about to expire (5 minutes buffer)
+  const tokenExpiryTime = pendingAgency.agency_expires_at ?? 0;
+  const timeUntilExpiry = tokenExpiryTime - Date.now();
+
+  if (timeUntilExpiry >= TOKEN_REFRESH_BUFFER_MS) {
+    // Token is still valid
+    return pendingAgency.agency_access_token;
+  }
+
+  // Token is expired or about to expire, refresh it
+  console.log(`🔔 Agency token expiring in ${Math.floor(timeUntilExpiry / 1000)}s for company ${user.companyId}, refreshing...`);
+
+  try {
+    const refreshed = await refreshAgencyTokenWithRetry(pendingAgency, user);
+
+    // Update the agency installation with new tokens (including token rotation)
+    const updatedAgencyData = {
+      ...pendingAgency,
+      agency_access_token: refreshed.access_token,
+      agency_refresh_token: refreshed.refresh_token || pendingAgency.agency_refresh_token,
+      agency_expires_at: Date.now() + ((refreshed.expires_in ?? 3600) * 1000) - 60_000,
+      // Store old tokens for grace period (token rotation)
+      previous_agency_refresh_token: pendingAgency.agency_refresh_token,
+      previous_agency_refresh_token_expires: Date.now() + TOKEN_ROTATION_GRACE_PERIOD_MS
+    };
+
+    await installs.saveAgencyInstall(user.companyId, updatedAgencyData);
+    console.log(`✅ Agency token refreshed and saved successfully for company ${user.companyId}`);
+
+    return refreshed.access_token;
+
+  } catch (refreshError) {
+    console.error('❌ All agency token refresh attempts failed:', refreshError?.response?.data || refreshError.message);
+
+    // Check if we have a previous refresh token within grace period
+    if (pendingAgency.previous_agency_refresh_token &&
+        pendingAgency.previous_agency_refresh_token_expires &&
+        Date.now() < pendingAgency.previous_agency_refresh_token_expires) {
+
+      console.log('🔄 Attempting to use previous agency refresh token within grace period...');
+
+      try {
+        // Try with the previous refresh token
+        const tempAgency = { ...pendingAgency, agency_refresh_token: pendingAgency.previous_agency_refresh_token };
+        const refreshed = await refreshAgencyTokenWithRetry(tempAgency, user, 1);
+
+        const updatedAgencyData = {
+          ...pendingAgency,
+          agency_access_token: refreshed.access_token,
+          agency_refresh_token: refreshed.refresh_token || pendingAgency.previous_agency_refresh_token,
+          agency_expires_at: Date.now() + ((refreshed.expires_in ?? 3600) * 1000) - 60_000
+        };
+
+        await installs.saveAgencyInstall(user.companyId, updatedAgencyData);
+        console.log(`✅ Successfully refreshed agency token using previous token for company ${user.companyId}`);
+
+        return refreshed.access_token;
+
+      } catch (fallbackError) {
+        console.error('❌ Previous agency refresh token also failed:', fallbackError?.response?.data || fallbackError.message);
+      }
+    }
+
+    // Only delete for permanent failures
+    if (refreshError?.response?.data?.error === 'invalid_grant' ||
+        refreshError?.response?.data?.error === 'invalid_client') {
+      console.log(`🗑️ Clearing permanently invalid agency installation for company ${user.companyId}`);
+      await installs.deleteAgencyInstall(user.companyId);
+      throw new Error('Agency authentication expired - please reconnect');
+    }
+
+    // For other errors, throw but don't delete
+    throw new Error(`Failed to refresh agency access token: ${refreshError?.response?.data?.message || refreshError.message}`);
+  }
+}
+
 // User context decryption
 router.post('/decrypt-user-data', express.json(), async (req, res) => {
   try {
@@ -139,12 +322,15 @@ router.post('/app-context', express.json(), async (req, res) => {
         console.log('🔄 Exchanging agency tokens for location-specific tokens');
 
         try {
+          // Ensure agency token is valid and refresh if needed
+          const validAgencyToken = await ensureValidAgencyToken(pendingAgency, user);
+
           const locationTokenResponse = await axios.post(`${API_BASE}/oauth/locationToken`, {
             locationId: locationToCheck,
             companyId: user.companyId
           }, {
             headers: {
-              Authorization: `Bearer ${pendingAgency.agency_access_token}`,
+              Authorization: `Bearer ${validAgencyToken}`,
               'Content-Type': 'application/json',
               Version: '2021-07-28'
             }
