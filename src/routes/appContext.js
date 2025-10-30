@@ -145,7 +145,8 @@ router.post('/app-context', express.json(), async (req, res) => {
           }, {
             headers: {
               Authorization: `Bearer ${pendingAgency.agency_access_token}`,
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              Version: '2021-07-28'
             }
           });
 
