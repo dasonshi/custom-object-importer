@@ -93,6 +93,47 @@ router.get('/install/:locationId', async (req, res) => {
   res.json({ hasInstall: has, tokenOk, locationOk, companyOk, logs });
 });
 
+// Force token to expire (for testing token refresh)
+router.post('/expire-token/:locationId', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Only available in development' });
+  }
+
+  const { locationId } = req.params;
+
+  try {
+    const hasInstall = await installs.has(locationId);
+    if (!hasInstall) {
+      return res.status(404).json({ error: 'Installation not found', locationId });
+    }
+
+    const install = await installs.get(locationId);
+    const oldExpiry = install.expires_at;
+
+    // Set token to expire in 2 minutes (within the 5-minute refresh buffer)
+    const newExpiry = Date.now() + (2 * 60 * 1000);
+
+    await installs.set(locationId, {
+      ...install,
+      expires_at: newExpiry
+    });
+
+    res.json({
+      success: true,
+      locationId,
+      oldExpiryDate: new Date(oldExpiry).toISOString(),
+      newExpiryDate: new Date(newExpiry).toISOString(),
+      message: 'Token set to expire in 2 minutes. Next API call should trigger refresh.'
+    });
+
+  } catch (e) {
+    res.status(500).json({
+      error: 'Failed to expire token',
+      details: e.message
+    });
+  }
+});
+
 // Token scopes test
 router.get('/token-scopes/:locationId', async (req, res) => {
   const { locationId } = req.params;
