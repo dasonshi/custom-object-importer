@@ -65,7 +65,17 @@ router.post('/submit', async (req, res) => {
     };
 
     // Forward to GHL webhook
-    const response = await fetch('https://services.leadconnectorhq.com/hooks/gdzneuvA9mUJoRroCv4O/webhook-trigger/29a349e8-cc3c-4966-8f60-21b92d80d4a3', {
+    const webhookUrl = process.env.FEEDBACK_WEBHOOK_URL;
+
+    if (!webhookUrl) {
+      console.error('FEEDBACK_WEBHOOK_URL not configured');
+      return res.status(500).json({
+        error: 'Feedback system not configured',
+        message: 'Please contact support'
+      });
+    }
+
+    const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
