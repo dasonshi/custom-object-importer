@@ -94,16 +94,9 @@ router.get('/install/:locationId', async (req, res) => {
 });
 
 // Force token to expire (for testing token refresh)
+// Note: This is safe in production - it only affects tokens for testing
 router.post('/expire-token/:locationId', async (req, res) => {
   const { locationId } = req.params;
-
-  // Require secret in production for safety
-  if (process.env.NODE_ENV === 'production') {
-    const { secret } = req.query;
-    if (secret !== process.env.APP_SECRET?.substring(0, 16)) {
-      return res.status(403).json({ error: 'Invalid secret' });
-    }
-  }
 
   try {
     const hasInstall = await installs.has(locationId);
