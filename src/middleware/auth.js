@@ -43,30 +43,24 @@ export function clearAuthCookie(res) {
 
 // Authentication middleware
 export async function requireAuth(req, res, next) {
-  let locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
-
-  // allow explicit override via ?locationId= or X-Location-Id
-  const override = (req.query.locationId || req.get('x-location-id') || '').trim();
-  if (override && override !== locationId) {
-    if (await installs.has(override)) {
-      // set signed cookie
-      setAuthCookie(res, override);
-      locationId = override;
-    } else {
-      // Clear old cookies and return auth required instead of forbidden
-      clearAuthCookie(res);
-      return res.status(401).json({ error: 'Authentication required', message: 'Please complete OAuth setup first' });
-    }
-  }
+  // SECURITY: Only trust the signed cookie for authentication
+  // Query parameters and headers are NOT trusted for auth
+  const locationId = req.signedCookies?.ghl_location || null;
 
   if (!locationId) {
-    return res.status(401).json({ error: 'Authentication required', message: 'Please complete OAuth setup first' });
+    return res.status(401).json({
+      error: 'Authentication required',
+      message: 'Please complete OAuth setup first'
+    });
   }
 
   const hasInstall = await installs.has(locationId);
   if (!hasInstall) {
     clearAuthCookie(res);
-    return res.status(401).json({ error: 'Installation not found', message: 'Please re-authenticate' });
+    return res.status(401).json({
+      error: 'Installation not found',
+      message: 'Please re-authenticate'
+    });
   }
 
   req.locationId = locationId;
@@ -75,25 +69,23 @@ export async function requireAuth(req, res, next) {
 
 export function validateTenant(req, res, next) {
   const paramLocation = req.params.locationId || req.query.locationId;
-  
+
   if (paramLocation && paramLocation !== req.locationId) {
-    return res.status(403).json({ 
+    return res.status(403).json({
       error: 'Access denied',
       message: 'Cannot access data for this location'
     });
   }
-  
+
   next();
 }
 
+// DEPRECATED - DO NOT USE
+// This function was a security vulnerability that allowed bypassing authentication
+// Use validateTenant instead to ensure query params match authenticated location
 export function handleLocationOverride(req, res, next) {
-  const requestedLocationId = req.query.locationId || req.params.locationId;
-  
-  if (requestedLocationId && requestedLocationId !== req.locationId) {
-    console.log(`Location override: ${req.locationId} -> ${requestedLocationId}`);
-    req.locationId = requestedLocationId;
-  }
-  
+  // No-op for backwards compatibility during migration
+  // All routes should use validateTenant instead
   next();
 }
 
