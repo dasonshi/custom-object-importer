@@ -4,7 +4,7 @@ import CryptoJS from 'crypto-js';
 import express from 'express';
 import axios from 'axios';
 import { setAuthCookie, installs } from '../middleware/auth.js';
-import { API_BASE } from '../services/tokenService.js';
+import { API_BASE, withAccessToken } from '../services/tokenService.js';
 
 const router = Router();
 
@@ -430,13 +430,13 @@ setAuthCookie(res, user.activeLocation);
 
     if (currentLocationId && await installs.has(currentLocationId)) {
       try {
-const install = await installs.get(currentLocationId);
-if (!install?.access_token) throw new Error('No tokens for this location');
+// Use withAccessToken to automatically handle token refresh
+const accessToken = await withAccessToken(currentLocationId);
 const { data: loc } = await axios.get(
   `${API_BASE}/locations/${encodeURIComponent(currentLocationId)}`,
   {
     headers: {
-      Authorization: `Bearer ${install.access_token}`,
+      Authorization: `Bearer ${accessToken}`,
       Version: '2021-07-28',
       Accept: 'application/json'
     },

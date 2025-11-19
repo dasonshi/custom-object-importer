@@ -633,8 +633,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         const properties = {};
         const recordId = row.id;
         for (const [k, v] of Object.entries(row)) {
-          // Skip system fields and empty values
-          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'association_id', 'related_record_id', 'association_type'].includes(k)) continue;
+          // Skip system fields, CSV parser metadata, and empty values
+          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'association_id', 'related_record_id', 'association_type', '__parsed_extra'].includes(k)) continue;
           if (v === '' || v === null || v === undefined) continue;
           
           // Use the actual field type from schema
