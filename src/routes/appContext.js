@@ -255,6 +255,9 @@ router.post('/app-context', express.json(), async (req, res) => {
       }
     }
 
+    // Get cookie location early for use in checks below
+    const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
+
     // Special case: Handle marketplace installs without encrypted user data
     // This happens when HighLevel doesn't provide encrypted context for marketplace apps
     if (!user && (!targetLocationId && !cookieLocation)) {
@@ -399,9 +402,6 @@ router.post('/app-context', express.json(), async (req, res) => {
         referer: req.headers.referer || 'none'
       }
     });
-
-    // Get cookie location for existing auth flows
-    const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 
 // 3) Enforce cookie vs activeLocation (only if user data is available)
 if (user?.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {
