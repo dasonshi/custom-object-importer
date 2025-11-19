@@ -95,11 +95,15 @@ router.get('/install/:locationId', async (req, res) => {
 
 // Force token to expire (for testing token refresh)
 router.post('/expire-token/:locationId', async (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(404).json({ error: 'Only available in development' });
-  }
-
   const { locationId } = req.params;
+
+  // Require secret in production for safety
+  if (process.env.NODE_ENV === 'production') {
+    const { secret } = req.query;
+    if (secret !== process.env.APP_SECRET?.substring(0, 16)) {
+      return res.status(403).json({ error: 'Invalid secret' });
+    }
+  }
 
   try {
     const hasInstall = await installs.has(locationId);

@@ -184,10 +184,8 @@ app.use(rateLimit({
 app.use('/api/auth', authRoutes);
 app.use('/templates', templateRoutes);
 
-// Debug routes only in development
-if (process.env.NODE_ENV !== 'production') {
-  app.use('/api/debug', debugRoutes);
-}
+// Debug routes (some available in production for testing)
+app.use('/api/debug', debugRoutes);
 app.use('/api/objects', objectRoutes);
 app.use('/api', agencyRoutes);
 app.use('/api/custom-values', customValuesRoutes);
