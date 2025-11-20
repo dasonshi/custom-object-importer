@@ -6,14 +6,9 @@ import axios from 'axios';
 
 const router = Router();
 
-// SECURITY: Disable all debug endpoints in production
-if (process.env.NODE_ENV === 'production') {
-  // Return 404 for all debug routes in production
-  // Express 5.x path-to-regexp v8 syntax: use :param* for wildcards
-  router.all('/:path*', (req, res) => {
-    res.status(404).json({ error: 'Debug endpoints disabled in production' });
-  });
-} else {
+// SECURITY: Only register debug routes in development
+// In production, router remains empty and all routes naturally 404
+if (process.env.NODE_ENV !== 'production') {
   // Development-only debug routes below
   // SDK methods check
   router.get('/sdk-methods', (req, res) => {
