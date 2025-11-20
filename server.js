@@ -61,7 +61,7 @@ const app = express();
 app.set('trust proxy', 1); // trust CF + Render chain
 app.disable('x-powered-by');
 
-// ===== OAuth: Install (Marketplace chooselocation endpoint, fixed scopes) =====
+// ===== OAuth Install (Marketplace chooselocation endpoint, fixed scopes) =====
 app.get('/oauth/install', (req, res) => {
   const state = createSecureState(ENC_KEY);
 
