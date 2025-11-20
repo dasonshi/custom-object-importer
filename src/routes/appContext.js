@@ -325,24 +325,26 @@ router.post('/app-context', express.json(), async (req, res) => {
         });
       }
     }
-    // Optional: log AFTER user exists
-    console.log('AppContext user:', user ? {
-      companyId: user.companyId,
-      activeLocation: user.activeLocation,
-      type: user.type,
-      email: user.email
-    } : 'No encrypted user data provided');
-    console.log('Request cookies debug:', {
-      hasGHLLocation: !!req.signedCookies?.ghl_location,
-      signedCookieKeys: Object.keys(req.signedCookies || {}),
-      regularCookieKeys: Object.keys(req.cookies || {}),
-      rawCookieHeader: req.headers.cookie || 'none',
-      cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing',
-      headers: {
-        userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
-        referer: req.headers.referer || 'none'
-      }
-    });
+    // Debug logging (only in development - contains PII)
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('AppContext user:', user ? {
+        companyId: user.companyId,
+        activeLocation: user.activeLocation,
+        type: user.type,
+        email: user.email
+      } : 'No encrypted user data provided');
+      console.log('Request cookies debug:', {
+        hasGHLLocation: !!req.signedCookies?.ghl_location,
+        signedCookieKeys: Object.keys(req.signedCookies || {}),
+        regularCookieKeys: Object.keys(req.cookies || {}),
+        rawCookieHeader: req.headers.cookie || 'none',
+        cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing',
+        headers: {
+          userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
+          referer: req.headers.referer || 'none'
+        }
+      });
+    }
 
 // 3) Enforce cookie vs activeLocation (only if user data is available)
 if (user?.activeLocation && cookieLocation && cookieLocation !== user.activeLocation) {

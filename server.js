@@ -159,7 +159,8 @@ app.use(cors({
     if (!origin) return cb(null, true); // Postman/mobile/no CORS
     if (isAllowedOrigin(origin)) return cb(null, true);
     console.warn(`CORS blocked origin: ${origin}`);
-    cb(new Error('CORS policy violation'));
+    // Don't throw error - just deny the request gracefully
+    cb(null, false);
   },
   credentials: true, // allow cookies
 }));
