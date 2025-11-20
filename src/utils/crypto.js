@@ -73,3 +73,21 @@ export function validateEncryptionSetup() {
     }
   }
 }
+
+// Validate GHL webhook signature
+export function validateWebhookSignature(payload, signature, secret) {
+  if (!signature) {
+    return false;
+  }
+
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+
+  // Use timing-safe comparison to prevent timing attacks
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expectedSignature)
+  );
+}

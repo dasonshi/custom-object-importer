@@ -13,7 +13,7 @@ import { InstallsDB } from './database.js';
 import CryptoJS from 'crypto-js';
 import { parseCSV, cleanupTempFiles } from './src/utils/csvParser.js';
 import { normalizeDataType, parseOptions, asBool } from './src/utils/dataTransformers.js';
-import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup } from './src/utils/crypto.js';
+import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup, validateWebhookSignature } from './src/utils/crypto.js';
 import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLocationOverride, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
@@ -423,9 +423,20 @@ return res.redirect('/launch');
 // Uninstall webhook handler
 app.post('/oauth/uninstall', express.json(), async (req, res) => {
   try {
+    // SECURITY: Validate webhook signature to prevent unauthorized uninstall requests
+    const signature = req.headers['x-webhook-signature'] || req.headers['x-ghl-signature'];
+
+    if (!validateWebhookSignature(req.body, signature, process.env.GHL_CLIENT_SECRET)) {
+      console.error('❌ Invalid webhook signature - rejecting uninstall request');
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: 'Invalid webhook signature'
+      });
+    }
+
     const { type, appId, locationId, companyId } = req.body;
 
-    console.log(`Uninstall webhook received:`, { type, appId, locationId, companyId });
+    console.log(`✅ Uninstall webhook received with valid signature:`, { type, appId, locationId, companyId });
 
     if (type === 'UNINSTALL') {
       if (locationId) {

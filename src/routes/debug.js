@@ -1,10 +1,18 @@
 // src/routes/debug.js
 import { Router } from 'express';
-import { installs } from '../middleware/auth.js';
+import { installs, requireAuth } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import axios from 'axios';
 
 const router = Router();
+
+// SECURITY: Disable all debug endpoints in production
+if (process.env.NODE_ENV === 'production') {
+  router.all('*', (req, res) => {
+    res.status(404).json({ error: 'Debug endpoints disabled in production' });
+  });
+  export default router;
+}
 
 // SDK methods check
 router.get('/sdk-methods', (req, res) => {
@@ -51,9 +59,18 @@ router.get('/cookies', (req, res) => {
   });
 });
 
-// Installation check
-router.get('/install/:locationId', async (req, res) => {
+// Installation check - REQUIRES AUTH and can only check own location
+router.get('/install/:locationId', requireAuth, async (req, res) => {
   const { locationId } = req.params;
+
+  // SECURITY: Only allow checking your own locationId
+  if (locationId !== req.locationId) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'You can only check your own installation'
+    });
+  }
+
   const has = await installs.has(locationId);
   let tokenOk = false, companyOk = false, locationOk = false, logs = [];
 
@@ -93,10 +110,17 @@ router.get('/install/:locationId', async (req, res) => {
   res.json({ hasInstall: has, tokenOk, locationOk, companyOk, logs });
 });
 
-// Force token to expire (for testing token refresh)
-// Note: This is safe in production - it only affects tokens for testing
-router.post('/expire-token/:locationId', async (req, res) => {
+// Force token to expire (for testing token refresh) - REQUIRES AUTH
+router.post('/expire-token/:locationId', requireAuth, async (req, res) => {
   const { locationId } = req.params;
+
+  // SECURITY: Only allow modifying your own tokens
+  if (locationId !== req.locationId) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'You can only modify your own tokens'
+    });
+  }
 
   try {
     const hasInstall = await installs.has(locationId);
@@ -131,10 +155,18 @@ router.post('/expire-token/:locationId', async (req, res) => {
   }
 });
 
-// Token scopes test
-router.get('/token-scopes/:locationId', async (req, res) => {
+// Token scopes test - REQUIRES AUTH
+router.get('/token-scopes/:locationId', requireAuth, async (req, res) => {
   const { locationId } = req.params;
-  
+
+  // SECURITY: Only allow checking your own token scopes
+  if (locationId !== req.locationId) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'You can only check your own token scopes'
+    });
+  }
+
   try {
     const hasInstall = await installs.has(locationId);
     if (!hasInstall) {
@@ -186,7 +218,7 @@ router.get('/token-scopes/:locationId', async (req, res) => {
       locationId,
       tokenExpiresAt: new Date(install.expires_at),
       scopeTests,
-      tokenPreview: token.substring(0, 30) + '...',
+      // SECURITY: Removed tokenPreview to prevent token leakage
       installUrl: req.get('origin') + '/oauth/install'
     });
 
