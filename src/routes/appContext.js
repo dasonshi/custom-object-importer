@@ -361,13 +361,16 @@ setAuthCookie(res, user.activeLocation);
     });
   }
 }
-    // If no cookie but we have an install for activeLocation, set it
-    if (user?.activeLocation && !cookieLocation && await installs.has(user.activeLocation)) {
-setAuthCookie(res, user.activeLocation);
-}
-    // 4) Location details (UI friendly) - determine location from user or cookie
+    // If no cookie but we have an install for activeLocation or targetLocationId, set it
+    const locationToAuth = user?.activeLocation || targetLocationId;
+    if (locationToAuth && !cookieLocation && await installs.has(locationToAuth)) {
+      setAuthCookie(res, locationToAuth);
+      console.log(`✅ Set auth cookie for location: ${locationToAuth}`);
+    }
+
+    // 4) Location details (UI friendly) - determine location from user, cookie, or targetLocationId
     let location = null;
-    const currentLocationId = user?.activeLocation || cookieLocation;
+    const currentLocationId = user?.activeLocation || cookieLocation || targetLocationId;
 
     if (currentLocationId && await installs.has(currentLocationId)) {
       try {
