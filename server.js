@@ -18,16 +18,27 @@ import { generateEncryptionKey, createSecureState, verifySecureState, validateEn
 import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
+console.log('Importing authRoutes...');
 import authRoutes from './src/routes/auth.js';
+console.log('Importing templateRoutes...');
 import templateRoutes from './src/routes/templates.js';
+console.log('Importing debugRoutes...');
 import debugRoutes from './src/routes/debug.js';
+console.log('Importing objectRoutes...');
 import objectRoutes from './src/routes/objects.js';
+console.log('Importing agencyRoutes...');
 import agencyRoutes from './src/routes/agency.js';
+console.log('Importing customValuesRoutes...');
 import customValuesRoutes from './src/routes/customValues.js';
+console.log('Importing associationsRoutes...');
 import associationsRoutes from './src/routes/associations.js';
+console.log('Importing importRoutes...');
 import importRoutes from './src/routes/imports/index.js';
+console.log('Importing appContextRoutes...');
 import appContextRoutes from './src/routes/appContext.js';
+console.log('Importing feedbackRoutes...');
 import feedbackRoutes from './src/routes/feedback.js';
+console.log('All route imports complete!');
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -200,20 +211,32 @@ app.use(rateLimit({
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 // Mount auth routes
+console.log('Mounting /api/auth...');
 app.use('/api/auth', authRoutes);
+console.log('Mounting /templates...');
 app.use('/templates', templateRoutes);
 
 // Debug routes (some available in production for testing)
+console.log('Mounting /api/debug...');
 app.use('/api/debug', debugRoutes);
+console.log('Mounting /api/objects...');
 app.use('/api/objects', objectRoutes);
+console.log('Mounting /api (agency)...');
 app.use('/api', agencyRoutes);
+console.log('Mounting /api/custom-values...');
 app.use('/api/custom-values', customValuesRoutes);
+console.log('Mounting /api/associations...');
 app.use('/api/associations', associationsRoutes);
+console.log('Mounting /api/feedback...');
 app.use('/api/feedback', feedbackRoutes);
 
+console.log('Mounting /import...');
 app.use('/import', importRoutes);
+console.log('Mounting /api (appContext)...');
 app.use('/api', appContextRoutes);  // Mount appContext routes first to avoid wildcard conflicts
+console.log('Mounting /api (importRoutes)...');
 app.use('/api', importRoutes);  // For the /api/objects/import style routes
+console.log('All routes mounted successfully!');
 
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
