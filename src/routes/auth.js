@@ -43,12 +43,21 @@ router.post('/logout', (req, res) => {
 // Disconnect and clear installation
 router.post('/disconnect', requireAuth, async (req, res) => {
   const locationId = req.locationId;
-  
+
   try {
+    // Delete the location-specific installation
     await installs.delete(locationId);
+
+    // Also delete any agency installation containing this location
+    // This prevents automatic reconnection via agency bulk install flow
+    await installs.deleteAgencyInstallByLocationId(locationId);
+
+    // Clear the auth cookie
     clearAuthCookie(res);
-    
-    res.json({ 
+
+    console.log(`✅ Disconnected location ${locationId} and cleared agency installs`);
+
+    res.json({
       message: 'Disconnected successfully',
       redirectUrl: '/oauth/install'
     });

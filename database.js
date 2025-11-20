@@ -178,6 +178,41 @@ export class InstallsDB {
     }
   }
 
+  // Find and delete agency install containing a specific locationId
+  // Used when a user disconnects to prevent automatic reconnection
+  async deleteAgencyInstallByLocationId(locationId) {
+    try {
+      // Get all agency installs
+      const agencyInstalls = await this.prisma.agencyInstall.findMany();
+
+      // Find the one containing this locationId
+      for (const record of agencyInstalls) {
+        try {
+          const decryptedData = this.decrypt(record.encryptedData);
+          const agencyData = JSON.parse(decryptedData);
+
+          // Check if this agency install contains the locationId
+          if (agencyData.locations?.some(l => l.id === locationId || l.locationId === locationId)) {
+            console.log(`🗑️ Deleting agency install for companyId: ${record.companyId} (contains location ${locationId})`);
+            await this.prisma.agencyInstall.delete({
+              where: { companyId: record.companyId }
+            });
+            return true;
+          }
+        } catch (e) {
+          console.error('Error checking agency install:', e.message);
+          continue;
+        }
+      }
+
+      console.log(`ℹ️ No agency install found containing location ${locationId}`);
+      return false;
+    } catch (e) {
+      console.error('Error in deleteAgencyInstallByLocationId:', e);
+      return false;
+    }
+  }
+
   // List all installations (for admin/debug)
   async list() {
     const installs = await this.prisma.install.findMany({
