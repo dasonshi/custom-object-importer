@@ -1,13 +1,13 @@
 // src/routes/associations.js
 import { Router } from 'express';
 import axios from 'axios';
-import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
+import { requireAuth, validateTenant } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import { handleAPIError } from '../utils/apiHelpers.js';
 
 const router = Router();
 
-router.get('/', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   
   try {

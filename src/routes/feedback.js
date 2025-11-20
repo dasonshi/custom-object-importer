@@ -1,13 +1,26 @@
 // src/routes/feedback.js
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 
 const router = Router();
 
 // Email validation regex
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Rate limiter for feedback submissions - 3 per hour per IP
+const feedbackLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // 3 submissions per hour
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many feedback submissions',
+    message: 'You can only submit feedback 3 times per hour. Please try again later.'
+  }
+});
+
 // Submit feedback endpoint
-router.post('/submit', async (req, res) => {
+router.post('/submit', feedbackLimiter, async (req, res) => {
   console.log('📩 Feedback submission received:', {
     name: req.body?.name,
     email: req.body?.email,

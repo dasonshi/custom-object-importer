@@ -191,27 +191,9 @@ async function ensureValidAgencyToken(pendingAgency, user) {
   }
 }
 
-// User context decryption
-router.post('/decrypt-user-data', express.json(), async (req, res) => {
-  try {
-    const { encryptedData } = req.body;
-    
-    if (!encryptedData) {
-      return res.status(400).json({ error: 'Encrypted data required' });
-    }
-
-    // Use CryptoJS directly (no const declaration needed)
-    const decrypted = CryptoJS.AES.decrypt(encryptedData, process.env.GHL_APP_SHARED_SECRET)
-      .toString(CryptoJS.enc.Utf8);
-    
-    const userData = JSON.parse(decrypted);
-    
-    res.json(userData);
-  } catch (error) {
-    console.error('Failed to decrypt user data:', error);
-    res.status(400).json({ error: 'Failed to decrypt user data' });
-  }
-});
+// SECURITY: Removed /decrypt-user-data endpoint - it was unused and allowed
+// unauthenticated decryption of user data, which is a security risk.
+// Decryption is now only done internally within /app-context endpoint.
 
 // App context endpoint
 router.post('/app-context', express.json(), async (req, res) => {

@@ -1,7 +1,7 @@
 // src/routes/objects.js
 import { Router } from 'express';
 import axios from 'axios';
-import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
+import { requireAuth, validateTenant } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import { installs } from '../middleware/auth.js';
 import Papa from 'papaparse';
@@ -9,7 +9,7 @@ import { handleAPIError } from '../utils/apiHelpers.js';
 const router = Router();
 
 // List all custom objects
-router.get('/', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   try {
     const token = await withAccessToken(locationId);
@@ -78,7 +78,7 @@ router.get('/:objectKey/schema', requireAuth, async (req, res) => {
 });
 
 // Get fields for object
-router.get('/:objectKey/fields', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   let { objectKey } = req.params;
   
@@ -139,7 +139,7 @@ router.get('/:objectKey/fields', requireAuth, handleLocationOverride, async (req
 });
 
 // Get associations for object
-router.get('/:objectKey/associations', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/:objectKey/associations', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
   
@@ -192,7 +192,7 @@ router.get('/:objectKey/associations', requireAuth, handleLocationOverride, asyn
   }
 });
 // Export all records for an object as CSV
-router.get('/:objectKey/records/export', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/:objectKey/records/export', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
   
@@ -377,7 +377,7 @@ router.get('/:objectKey/records/export', requireAuth, handleLocationOverride, as
 });
 
 // Search/Get records for a specific object (for viewing, not export)
-router.post('/:objectKey/records/search', requireAuth, handleLocationOverride, async (req, res) => {
+router.post('/:objectKey/records/search', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
   
@@ -426,7 +426,7 @@ router.post('/:objectKey/records/search', requireAuth, handleLocationOverride, a
 });
 
 // Convenience GET endpoint for simple record queries
-router.get('/:objectKey/records', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/:objectKey/records', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
   

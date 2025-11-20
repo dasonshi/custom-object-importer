@@ -1,12 +1,12 @@
 // src/routes/customValues.js
 import { Router } from 'express';
 import axios from 'axios';
-import { requireAuth, handleLocationOverride } from '../middleware/auth.js';
+import { requireAuth, validateTenant } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
 
 const router = Router();
 
-router.get('/', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   
   try {
@@ -28,7 +28,7 @@ router.get('/', requireAuth, handleLocationOverride, async (req, res) => {
 });
 
 // Get custom values folders - attempts to use custom fields API for folder structure
-router.get('/folders', requireAuth, handleLocationOverride, async (req, res) => {
+router.get('/folders', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   
   try {

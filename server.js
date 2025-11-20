@@ -9,13 +9,14 @@ import crypto from 'crypto';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { InstallsDB } from './database.js';
 import CryptoJS from 'crypto-js';
 import { parseCSV, cleanupTempFiles } from './src/utils/csvParser.js';
 import { normalizeDataType, parseOptions, asBool } from './src/utils/dataTransformers.js';
 import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup, validateWebhookSignature } from './src/utils/crypto.js';
 import { handleAPIError } from './src/utils/apiHelpers.js';
-import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, handleLocationOverride, installs } from './src/middleware/auth.js';
+import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
 import authRoutes from './src/routes/auth.js';
 import templateRoutes from './src/routes/templates.js';
@@ -113,6 +114,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 // Cookie parser with your APP_SECRET
 app.use(cookieParser(process.env.APP_SECRET || 'dev-secret-change-me-in-production'));
+
+// Security headers with helmet
+app.use(helmet({
+  contentSecurityPolicy: false, // We set CSP manually below for GHL iframe embedding
+  crossOriginEmbedderPolicy: false, // Allow embedding in GHL
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
 const COOKIE_CLEAR_OPTS = {
   domain: process.env.COOKIE_DOMAIN || undefined, // e.g., importer.savvysales.ai
   httpOnly: true,
@@ -180,7 +193,7 @@ app.use('/import', rateLimit({
 
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 50, // Reduced from 200 to prevent enumeration attacks
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS' || req.path === '/health',
@@ -255,16 +268,16 @@ if (typeof state === 'string' && state.length > 0) {
       redirect_uri: process.env.GHL_REDIRECT_URI,
     });
 
-    console.log('Token response received:', tokenResp ? 'Success' : 'No response');
-    console.log('Token response keys:', tokenResp ? Object.keys(tokenResp) : 'No response');
-    console.log('LocationId from response:', tokenResp?.locationId || 'Not found');
-    console.log('IsBulkInstallation:', tokenResp?.isBulkInstallation || false);
-    console.log('UserType:', tokenResp?.userType || 'unknown');
-    console.log('CompanyId:', tokenResp?.companyId || 'Not found');
-    console.log('All token response fields:', Object.entries(tokenResp || {}).map(([k, v]) =>
-      k === 'scope' ? `${k}: ${v}` : // Show full scope for debugging
-      `${k}: ${typeof v === 'string' ? v.substring(0, 20) + (v.length > 20 ? '...' : '') : v}`
-    ));
+    // SECURITY: Only log token metadata in development, never log actual tokens
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('Token response received:', tokenResp ? 'Success' : 'No response');
+      console.log('LocationId from response:', tokenResp?.locationId || 'Not found');
+      console.log('IsBulkInstallation:', tokenResp?.isBulkInstallation || false);
+      console.log('UserType:', tokenResp?.userType || 'unknown');
+      console.log('CompanyId:', tokenResp?.companyId || 'Not found');
+    } else {
+      console.log('OAuth token exchange successful for locationId:', tokenResp?.locationId);
+    }
     const { access_token, refresh_token, expires_in, locationId, isBulkInstallation, userType, companyId } = tokenResp || {};
 
 if (!locationId) {
