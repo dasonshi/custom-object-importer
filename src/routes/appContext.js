@@ -430,11 +430,19 @@ res.json({ user, location });
 router.post('/switch-location', express.json(), async (req, res) => {
   try {
     const { locationId, encryptedData } = req.body;
-    
+
     if (!locationId) {
       return res.status(400).json({ error: 'Location ID required' });
     }
-    
+
+    // SECURITY: encryptedData is REQUIRED to prove user has access
+    if (!encryptedData) {
+      return res.status(401).json({
+        error: 'authentication_required',
+        message: 'Encrypted user context required to switch locations'
+      });
+    }
+
     // Verify the new location has the app installed
     if (!await installs.has(locationId)) {
       return res.status(422).json({
@@ -443,38 +451,39 @@ router.post('/switch-location', express.json(), async (req, res) => {
         redirectUrl: '/oauth/install'
       });
     }
-    
-    // Decrypt and validate user context if provided
-    if (encryptedData) {
-      try {
-        const decrypted = CryptoJS.AES.decrypt(
-          encryptedData,
-          process.env.GHL_APP_SHARED_SECRET
-        ).toString(CryptoJS.enc.Utf8);
-        const user = JSON.parse(decrypted);
-        
-        // Ensure the user has access to this location
-        if (user.activeLocation !== locationId) {
-          return res.status(403).json({ 
-            error: 'access_denied',
-            message: 'User does not have access to this location' 
-          });
-        }
-      } catch (e) {
-        console.error('User context validation failed:', e.message);
-        return res.status(400).json({ error: 'Invalid user context' });
+
+    // Decrypt and validate user context
+    try {
+      const decrypted = CryptoJS.AES.decrypt(
+        encryptedData,
+        process.env.GHL_APP_SHARED_SECRET
+      ).toString(CryptoJS.enc.Utf8);
+      const user = JSON.parse(decrypted);
+
+      // Ensure the user has access to this location
+      if (user.activeLocation !== locationId) {
+        return res.status(403).json({
+          error: 'access_denied',
+          message: 'User does not have access to this location'
+        });
       }
+    } catch (e) {
+      console.error('User context validation failed:', e.message);
+      return res.status(401).json({
+        error: 'invalid_authentication',
+        message: 'Invalid or expired user context'
+      });
     }
-    
+
     // Set the new location cookie
     setAuthCookie(res, locationId);
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       locationId,
-      message: 'Location switched successfully' 
+      message: 'Location switched successfully'
     });
-    
+
   } catch (error) {
     console.error('Location switch failed:', error.message);
     res.status(500).json({ error: 'Location switch failed' });
