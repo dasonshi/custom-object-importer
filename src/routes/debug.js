@@ -9,7 +9,8 @@ const router = Router();
 // SECURITY: Disable all debug endpoints in production
 if (process.env.NODE_ENV === 'production') {
   // Return 404 for all debug routes in production
-  router.all('*', (req, res) => {
+  // Note: Express 5.x requires named wildcards, not '*'
+  router.all('/:path*', (req, res) => {
     res.status(404).json({ error: 'Debug endpoints disabled in production' });
   });
 } else {
