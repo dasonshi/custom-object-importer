@@ -19,16 +19,16 @@ import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
 import authRoutes from './src/routes/auth.js';
-// import templateRoutes from './src/routes/templates.js';
-// import debugRoutes from './src/routes/debug.js';
-// import objectRoutes from './src/routes/objects.js';
-// import agencyRoutes from './src/routes/agency.js';
+import templateRoutes from './src/routes/templates.js';
+import debugRoutes from './src/routes/debug.js';
+import objectRoutes from './src/routes/objects.js';
+import agencyRoutes from './src/routes/agency.js';
 // import customValuesRoutes from './src/routes/customValues.js';
 // import associationsRoutes from './src/routes/associations.js';
 // import importRoutes from './src/routes/imports/index.js';
 // import appContextRoutes from './src/routes/appContext.js';
 // import feedbackRoutes from './src/routes/feedback.js';
-console.log('✓ All route imports complete!');
+console.log('✓ Route imports complete! (testing first half)');
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -202,17 +202,17 @@ app.use(rateLimit({
 }));
 // Mount auth routes
 app.use('/api/auth', authRoutes);
-// app.use('/templates', templateRoutes);
-// app.use('/api/debug', debugRoutes);
-// app.use('/api/objects', objectRoutes);
-// app.use('/api', agencyRoutes);
+app.use('/templates', templateRoutes);
+app.use('/api/debug', debugRoutes);
+app.use('/api/objects', objectRoutes);
+app.use('/api', agencyRoutes);
 // app.use('/api/custom-values', customValuesRoutes);
 // app.use('/api/associations', associationsRoutes);
 // app.use('/api/feedback', feedbackRoutes);
 // app.use('/import', importRoutes);
 // app.use('/api', appContextRoutes);
 // app.use('/api', importRoutes);
-console.log('✓ Routes mounted successfully!');
+console.log('✓ Routes mounted successfully! (first half only)');
 
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
