@@ -23,12 +23,11 @@ import templateRoutes from './src/routes/templates.js';
 import debugRoutes from './src/routes/debug.js';
 import objectRoutes from './src/routes/objects.js';
 import agencyRoutes from './src/routes/agency.js';
-// import customValuesRoutes from './src/routes/customValues.js';
-// import associationsRoutes from './src/routes/associations.js';
-// import importRoutes from './src/routes/imports/index.js';
-// import appContextRoutes from './src/routes/appContext.js';
-// import feedbackRoutes from './src/routes/feedback.js';
-console.log('✓ Route imports complete! (testing first half)');
+import customValuesRoutes from './src/routes/customValues.js';
+import associationsRoutes from './src/routes/associations.js';
+import importRoutes from './src/routes/imports/index.js';
+import appContextRoutes from './src/routes/appContext.js';
+import feedbackRoutes from './src/routes/feedback.js';
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -206,13 +205,12 @@ app.use('/templates', templateRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/objects', objectRoutes);
 app.use('/api', agencyRoutes);
-// app.use('/api/custom-values', customValuesRoutes);
-// app.use('/api/associations', associationsRoutes);
-// app.use('/api/feedback', feedbackRoutes);
-// app.use('/import', importRoutes);
-// app.use('/api', appContextRoutes);
-// app.use('/api', importRoutes);
-console.log('✓ Routes mounted successfully! (first half only)');
+app.use('/api/custom-values', customValuesRoutes);
+app.use('/api/associations', associationsRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/import', importRoutes);
+app.use('/api', appContextRoutes);
+app.use('/api', importRoutes);
 
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
