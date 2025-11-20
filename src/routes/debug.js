@@ -11,8 +11,8 @@ if (process.env.NODE_ENV === 'production') {
   router.all('*', (req, res) => {
     res.status(404).json({ error: 'Debug endpoints disabled in production' });
   });
-  export default router;
-}
+} else {
+  // Debug routes only available in development
 
 // SDK methods check
 router.get('/sdk-methods', (req, res) => {
@@ -230,5 +230,7 @@ router.get('/token-scopes/:locationId', requireAuth, async (req, res) => {
     });
   }
 });
+
+} // End of development-only debug routes
 
 export default router;
