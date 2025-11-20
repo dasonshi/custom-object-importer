@@ -18,37 +18,17 @@ import { generateEncryptionKey, createSecureState, verifySecureState, validateEn
 import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, installs } from './src/middleware/auth.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
-console.log('Importing authRoutes...');
 import authRoutes from './src/routes/auth.js';
-console.log('✓ authRoutes imported');
-console.log('Importing templateRoutes...');
-import templateRoutes from './src/routes/templates.js';
-console.log('✓ templateRoutes imported');
-console.log('Importing debugRoutes...');
-import debugRoutes from './src/routes/debug.js';
-console.log('✓ debugRoutes imported');
-console.log('Importing objectRoutes...');
-import objectRoutes from './src/routes/objects.js';
-console.log('✓ objectRoutes imported');
-console.log('Importing agencyRoutes...');
-import agencyRoutes from './src/routes/agency.js';
-console.log('✓ agencyRoutes imported');
-console.log('Importing customValuesRoutes...');
-import customValuesRoutes from './src/routes/customValues.js';
-console.log('✓ customValuesRoutes imported');
-console.log('Importing associationsRoutes...');
-import associationsRoutes from './src/routes/associations.js';
-console.log('✓ associationsRoutes imported');
-console.log('Importing importRoutes...');
-import importRoutes from './src/routes/imports/index.js';
-console.log('✓ importRoutes imported');
-console.log('Importing appContextRoutes...');
-import appContextRoutes from './src/routes/appContext.js';
-console.log('✓ appContextRoutes imported');
-console.log('Importing feedbackRoutes...');
-import feedbackRoutes from './src/routes/feedback.js';
-console.log('✓ feedbackRoutes imported');
-console.log('All route imports complete!');
+// import templateRoutes from './src/routes/templates.js';
+// import debugRoutes from './src/routes/debug.js';
+// import objectRoutes from './src/routes/objects.js';
+// import agencyRoutes from './src/routes/agency.js';
+// import customValuesRoutes from './src/routes/customValues.js';
+// import associationsRoutes from './src/routes/associations.js';
+// import importRoutes from './src/routes/imports/index.js';
+// import appContextRoutes from './src/routes/appContext.js';
+// import feedbackRoutes from './src/routes/feedback.js';
+console.log('✓ All route imports complete!');
 
 
 // Replace the HighLevel lines with this temporary debug version:
@@ -221,32 +201,18 @@ app.use(rateLimit({
   message: { error: 'Rate limit exceeded, please try again later' }
 }));
 // Mount auth routes
-console.log('Mounting /api/auth...');
 app.use('/api/auth', authRoutes);
-console.log('Mounting /templates...');
-app.use('/templates', templateRoutes);
-
-// Debug routes (some available in production for testing)
-console.log('Mounting /api/debug...');
-app.use('/api/debug', debugRoutes);
-console.log('Mounting /api/objects...');
-app.use('/api/objects', objectRoutes);
-console.log('Mounting /api (agency)...');
-app.use('/api', agencyRoutes);
-console.log('Mounting /api/custom-values...');
-app.use('/api/custom-values', customValuesRoutes);
-console.log('Mounting /api/associations...');
-app.use('/api/associations', associationsRoutes);
-console.log('Mounting /api/feedback...');
-app.use('/api/feedback', feedbackRoutes);
-
-console.log('Mounting /import...');
-app.use('/import', importRoutes);
-console.log('Mounting /api (appContext)...');
-app.use('/api', appContextRoutes);
-console.log('Mounting /api (importRoutes again)...');
-app.use('/api', importRoutes);
-console.log('All routes mounted successfully!');
+// app.use('/templates', templateRoutes);
+// app.use('/api/debug', debugRoutes);
+// app.use('/api/objects', objectRoutes);
+// app.use('/api', agencyRoutes);
+// app.use('/api/custom-values', customValuesRoutes);
+// app.use('/api/associations', associationsRoutes);
+// app.use('/api/feedback', feedbackRoutes);
+// app.use('/import', importRoutes);
+// app.use('/api', appContextRoutes);
+// app.use('/api', importRoutes);
+console.log('✓ Routes mounted successfully!');
 
 // ===== Health Check Route =====
 app.get('/health', async (req, res) => {
