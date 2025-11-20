@@ -41,6 +41,14 @@ export function clearAuthCookie(res) {
   );
 }
 
+// Helper to detect Safari browser
+function isSafari(userAgent) {
+  return userAgent &&
+         userAgent.includes('Safari') &&
+         !userAgent.includes('Chrome') &&
+         !userAgent.includes('Chromium');
+}
+
 // Authentication middleware
 export async function requireAuth(req, res, next) {
   // SECURITY: Only trust the signed cookie for authentication
@@ -48,6 +56,23 @@ export async function requireAuth(req, res, next) {
   const locationId = req.signedCookies?.ghl_location || null;
 
   if (!locationId) {
+    const userAgent = req.headers['user-agent'] || '';
+    const isSafariBrowser = isSafari(userAgent);
+
+    // Provide Safari-specific messaging for cookie issues
+    if (isSafariBrowser) {
+      return res.status(401).json({
+        error: 'safari_cookie_blocked',
+        message: 'Safari is blocking authentication cookies. Please try Chrome, Firefox, or Edge for the best experience.',
+        userAgent: userAgent,
+        troubleshooting: {
+          recommendation: 'Use Chrome, Firefox, or Edge browser',
+          safariIssue: 'Safari\'s privacy settings block cross-site cookies required for this app',
+          learnMore: 'https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/'
+        }
+      });
+    }
+
     return res.status(401).json({
       error: 'Authentication required',
       message: 'Please complete OAuth setup first'
