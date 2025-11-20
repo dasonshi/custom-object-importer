@@ -8,14 +8,14 @@ const router = Router();
 
 // SECURITY: Disable all debug endpoints in production
 if (process.env.NODE_ENV === 'production') {
+  // Return 404 for all debug routes in production
   router.all('*', (req, res) => {
     res.status(404).json({ error: 'Debug endpoints disabled in production' });
   });
 } else {
-  // Debug routes only available in development
-
-// SDK methods check
-router.get('/sdk-methods', (req, res) => {
+  // Development-only debug routes below
+  // SDK methods check
+  router.get('/sdk-methods', (req, res) => {
   const methods = {
     ghl_keys: Object.keys(global.ghl),
     has_objects: !!global.ghl.objects,
@@ -26,7 +26,7 @@ router.get('/sdk-methods', (req, res) => {
     has_request: typeof global.ghl.request === 'function',
     has_setAccessToken: typeof global.ghl.setAccessToken === 'function'
   };
-  
+
   if (global.ghl.objects) {
     methods.objects_methods = Object.keys(global.ghl.objects);
   }
@@ -45,7 +45,7 @@ router.get('/sdk-methods', (req, res) => {
   if (global.ghl.oauth) {
     methods.oauth_methods = Object.keys(global.ghl.oauth);
   }
-  
+
   res.json(methods);
 });
 
@@ -94,13 +94,13 @@ router.get('/install/:locationId', requireAuth, async (req, res) => {
       const r1 = { data };
 
       locationOk = !!r1.data?.id || !!r1.data?.name;
-      const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`, 
-        { 
-          headers: { 
+      const r2 = await axios.get(`${API_BASE}/marketplace/app/${process.env.GHL_CLIENT_ID}/installations`,
+        {
+          headers: {
             Authorization: `Bearer ${token}`,
             Version: '2021-07-28'
-          } 
-        });      
+          }
+        });
       companyOk = Boolean(r2.data?.company?.name || r2.data?.name);
     } catch (e) {
       logs.push(e?.response?.data || e.message);
@@ -178,7 +178,7 @@ router.get('/token-scopes/:locationId', requireAuth, async (req, res) => {
 
     const scopeTests = {
       'objects/schema.readonly': false,
-      'objects/schema.write': false, 
+      'objects/schema.write': false,
       'objects/record.readonly': false,
       'objects/record.write': false,
       'locations/customFields.readonly': false,
@@ -213,7 +213,7 @@ router.get('/token-scopes/:locationId', requireAuth, async (req, res) => {
     } catch (e) { console.log('Records read failed:', e?.response?.status); }
 
     const install = await installs.get(locationId);
-    
+
     res.json({
       locationId,
       tokenExpiresAt: new Date(install.expires_at),
@@ -229,8 +229,7 @@ router.get('/token-scopes/:locationId', requireAuth, async (req, res) => {
       details: e?.response?.data || e.message
     });
   }
-});
-
-} // End of development-only debug routes
+  });
+}
 
 export default router;
