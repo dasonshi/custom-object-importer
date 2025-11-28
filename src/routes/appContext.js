@@ -321,13 +321,96 @@ router.post('/app-context', express.json(), async (req, res) => {
 
         // Optional: Clean up the agency installation if all locations have been consumed
         // For now, we'll leave it for future locations
-      } else if (locationToCheck) {
-        console.log('❌ No agency installation found for location:', locationToCheck);
-        return res.status(422).json({
-          error: 'app_not_installed',
-          message: `App not installed for location ${locationToCheck}`,
-          redirectUrl: '/oauth/install'
-        });
+      } else if (locationToCheck && user?.companyId) {
+        // No agency tokens stored - try the Reconnect API to recover
+        console.log('🔄 No agency installation found, trying Reconnect API for company:', user.companyId);
+
+        try {
+          const reconnectResponse = await axios.post(`${API_BASE}/oauth/reconnect`, {
+            clientKey: process.env.GHL_CLIENT_ID,
+            clientSecret: process.env.GHL_CLIENT_SECRET,
+            companyId: user.companyId
+          }, {
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            timeout: 10000
+          });
+
+          if (reconnectResponse.data?.authorizationCode) {
+            console.log('✅ Got new authorization code from Reconnect API');
+
+            // Exchange for tokens
+            const tokenResponse = await axios.post(`${API_BASE}/oauth/token`, {
+              client_id: process.env.GHL_CLIENT_ID,
+              client_secret: process.env.GHL_CLIENT_SECRET,
+              grant_type: 'authorization_code',
+              code: reconnectResponse.data.authorizationCode,
+              redirect_uri: process.env.GHL_REDIRECT_URI
+            }, {
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            });
+
+            const { access_token, refresh_token, expires_in, companyId } = tokenResponse.data;
+
+            if (access_token) {
+              console.log('✅ Got fresh tokens from Reconnect flow');
+
+              // Save agency tokens
+              await installs.saveAgencyInstall(companyId || user.companyId, {
+                agency_access_token: access_token,
+                agency_refresh_token: refresh_token,
+                agency_expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
+                userType: 'Company',
+                companyId: companyId || user.companyId,
+                locations: []
+              });
+
+              // Now try to exchange for location token
+              const locationTokenResponse = await axios.post(`${API_BASE}/oauth/locationToken`, {
+                locationId: locationToCheck,
+                companyId: companyId || user.companyId
+              }, {
+                headers: {
+                  Authorization: `Bearer ${access_token}`,
+                  'Content-Type': 'application/json',
+                  Version: '2021-07-28'
+                }
+              });
+
+              if (locationTokenResponse.data?.access_token) {
+                console.log('✅ Got location token via Reconnect flow');
+
+                await installs.set(locationToCheck, {
+                  access_token: locationTokenResponse.data.access_token,
+                  refresh_token: locationTokenResponse.data.refresh_token,
+                  expires_at: Date.now() + ((locationTokenResponse.data.expires_in ?? 3600) * 1000),
+                  isBulkInstallation: true,
+                  userType: 'Location',
+                  companyId: companyId || user.companyId
+                });
+
+                // Continue processing - don't return error
+                console.log('✅ Successfully recovered via Reconnect API');
+              }
+            }
+          }
+        } catch (reconnectError) {
+          console.error('❌ Reconnect API failed:', reconnectError?.response?.data || reconnectError.message);
+          // Fall through to error response below
+        }
+
+        // Check if we successfully recovered
+        if (!await installs.has(locationToCheck)) {
+          console.log('❌ Could not recover installation for location:', locationToCheck);
+          return res.status(422).json({
+            error: 'app_not_installed',
+            message: `App not installed for location ${locationToCheck}. Please reinstall from the marketplace.`,
+            redirectUrl: '/oauth/install'
+          });
+        }
       }
     }
     // Debug logging (only in development - contains PII)
