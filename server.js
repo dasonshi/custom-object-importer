@@ -397,11 +397,23 @@ if (!locationId) {
         }
 
         console.log('💾 Bulk installation processed for', installedLocations.length, 'locations');
-        return res.redirect('/launch');
-      } else {
-        console.log('⚠️ No installed locations found for bulk installation');
-        return res.redirect('/launch?error=no_locations');
       }
+
+      // Always save agency tokens for on-demand location token exchange
+      // This handles the case where GHL returns 0 installed locations at install time
+      // (timing issue or API quirk) - the app-context endpoint can exchange later
+      console.log('💾 Saving agency tokens for company:', companyId);
+      await installs.saveAgencyInstall(companyId, {
+        agency_access_token: access_token,
+        agency_refresh_token: refresh_token,
+        agency_expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000,
+        userType: 'Company',
+        companyId,
+        locations: allLocations.map(loc => ({ id: loc._id, name: loc.name }))
+      });
+      console.log('✅ Agency tokens saved for on-demand consumption');
+
+      return res.redirect('/launch');
 
     } catch (error) {
       console.error('❌ Failed to fetch installed locations:', error?.response?.status, error?.response?.data || error.message);

@@ -259,8 +259,13 @@ router.post('/app-context', express.json(), async (req, res) => {
 
       const pendingAgency = await installs.getAgencyInstallByCompanyId(user.companyId);
 
-      if (pendingAgency && pendingAgency.locations?.some(l => l.id === locationToCheck)) {
-        console.log('🎯 Found matching agency installation for location:', locationToCheck);
+      // Don't require location to be in pre-stored list.
+      // GHL's installedLocations API sometimes returns 0 locations due to timing.
+      // Just try the token exchange - GHL will reject if app isn't installed at this location.
+      if (pendingAgency) {
+        const locationInList = pendingAgency.locations?.some(l => l.id === locationToCheck);
+        console.log('🎯 Found agency installation for company:', user.companyId,
+          locationInList ? `(location ${locationToCheck} in stored list)` : '(location not in stored list - trying exchange anyway)');
 
         // Exchange agency tokens for location-specific tokens
         console.log('🔄 Exchanging agency tokens for location-specific tokens');
