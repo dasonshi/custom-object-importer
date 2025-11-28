@@ -242,17 +242,29 @@ app.get('/oauth/callback', async (req, res) => {
     return res.status(400).send('Authorization code is required');
   }
   
-// Marketplace sometimes omits `state`; verify if present, otherwise proceed
-if (typeof state === 'string' && state.length > 0) {
-  try {
-    verifySecureState(state,ENC_KEY);
-  } catch (e) {
-    console.error('OAuth state validation failed:', e.message);
-    return res.status(400).send(`Invalid or expired state: ${e.message}`);
+// State parameter handling:
+  // - GHL Marketplace installs do NOT include state parameter
+  // - Direct OAuth installs (from our /oauth/install endpoint) include state
+  // - If state is provided, it MUST be valid (CSRF protection)
+  // - If state is missing, allow it (marketplace install)
+  if (state && typeof state === 'string' && state.length > 0) {
+    try {
+      verifySecureState(state, ENC_KEY);
+      console.log('✅ OAuth state validated successfully');
+    } catch (e) {
+      const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+      console.error('🚨 OAuth state validation failed:', {
+        timestamp: new Date().toISOString(),
+        error: e.message,
+        clientIp,
+        userAgent: req.headers['user-agent'],
+        referer: req.headers['referer']
+      });
+      return res.redirect('/launch?error=invalid_state');
+    }
+  } else {
+    console.log('ℹ️ OAuth callback without state (likely GHL Marketplace install) - proceeding');
   }
-} else {
-  console.warn('OAuth callback arrived without state (likely Marketplace install). Proceeding.');
-}
 
   try {
     const codePrefix = String(code).substring(0, 8);
@@ -738,6 +750,156 @@ app.get('/', (req, res) => {
 });
 
 app.get('/launch', (req, res) => {
+  const error = req.query.error;
+
+  // Handle error cases
+  if (error === 'missing_state' || error === 'invalid_state') {
+    const errorTitle = error === 'missing_state'
+      ? 'Security Check Failed'
+      : 'Session Expired';
+    const errorMessage = error === 'missing_state'
+      ? 'The authentication request was missing required security information. This may indicate a security issue.'
+      : 'Your authentication session has expired. Please try again.';
+
+    return res.status(403).send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>${errorTitle}</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        padding: 40px;
+        text-align: center;
+        background: #f5f5f5;
+      }
+      .container {
+        max-width: 500px;
+        margin: 100px auto;
+        background: white;
+        padding: 40px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      h1 {
+        color: #ef4444;
+        font-size: 24px;
+        margin-bottom: 16px;
+      }
+      p {
+        color: #666;
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }
+      .retry-btn {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #3b82f6;
+        color: white;
+        text-decoration: none;
+        border-radius: 6px;
+        font-weight: 500;
+        transition: background 0.2s;
+      }
+      .retry-btn:hover {
+        background: #2563eb;
+      }
+      .error-code {
+        font-size: 12px;
+        color: #999;
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>⚠️ ${errorTitle}</h1>
+      <p>${errorMessage}</p>
+      <a href="/oauth/install" class="retry-btn">Try Again</a>
+      <p class="error-code">Error: ${error}</p>
+    </div>
+    <script>
+      // Notify parent window of error
+      (function() {
+        const errorType = '${error}';
+        if (window.opener) {
+          try {
+            window.opener.postMessage({ type: 'oauth_error', error: errorType }, '*');
+          } catch (e) {
+            console.error('Could not message parent:', e);
+          }
+        }
+        if (window.parent && window.parent !== window) {
+          try {
+            window.parent.postMessage({ type: 'oauth_error', error: errorType }, '*');
+          } catch (e) {
+            console.error('Could not message parent frame:', e);
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>`);
+  }
+
+  // Handle other error cases
+  if (error === 'no_location_id') {
+    return res.status(400).send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Installation Error</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        padding: 40px;
+        text-align: center;
+        background: #f5f5f5;
+      }
+      .container {
+        max-width: 500px;
+        margin: 100px auto;
+        background: white;
+        padding: 40px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      h1 {
+        color: #ef4444;
+        font-size: 24px;
+        margin-bottom: 16px;
+      }
+      p {
+        color: #666;
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }
+      .retry-btn {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #3b82f6;
+        color: white;
+        text-decoration: none;
+        border-radius: 6px;
+        font-weight: 500;
+        transition: background 0.2s;
+      }
+      .retry-btn:hover {
+        background: #2563eb;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>⚠️ Installation Error</h1>
+      <p>Unable to complete the installation. Please ensure you selected a location and try again.</p>
+      <a href="/oauth/install" class="retry-btn">Try Again</a>
+    </div>
+  </body>
+</html>`);
+  }
+
+  // Success case - original behavior
   res.status(200).send(`<!doctype html>
 <html>
   <head>
@@ -799,7 +961,7 @@ app.get('/launch', (req, res) => {
             console.error('Could not message parent:', e);
           }
         }
-        
+
         // Also try parent frame (if in iframe)
         if (window.parent && window.parent !== window) {
           try {
@@ -808,14 +970,14 @@ app.get('/launch', (req, res) => {
             console.error('Could not message parent frame:', e);
           }
         }
-        
+
         // Auto close after brief delay to ensure message is sent
         setTimeout(() => {
           try {
             window.close();
           } catch (e) {
             // If close fails, show a message
-            document.querySelector('.container').innerHTML = 
+            document.querySelector('.container').innerHTML =
               '<h1>✓ Connected Successfully</h1>' +
               '<p>You can now close this window and return to the app.</p>';
           }
