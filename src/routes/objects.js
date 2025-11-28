@@ -6,34 +6,70 @@ import { withAccessToken, API_BASE } from '../services/tokenService.js';
 import { installs } from '../middleware/auth.js';
 import Papa from 'papaparse';
 import { handleAPIError } from '../utils/apiHelpers.js';
+import { isStandardObject, getFieldFetchEndpoint } from '../utils/objectHelpers.js';
 const router = Router();
 
-// List all custom objects
+// List all objects (both standard and custom)
 router.get('/', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   try {
     const token = await withAccessToken(locationId);
     const r = await axios.get(`${API_BASE}/objects/`, {
-      headers: { 
+      headers: {
         Authorization: `Bearer ${token}`,
         Version: '2021-07-28'
       },
       params: { locationId }
     });
 
-    const allObjects = Array.isArray(r.data?.objects) ? r.data.objects : 
-                      Array.isArray(r.data?.data) ? r.data.data : 
+    const allObjects = Array.isArray(r.data?.objects) ? r.data.objects :
+                      Array.isArray(r.data?.data) ? r.data.data :
                       Array.isArray(r.data) ? r.data : [];
-    
-    const customObjects = allObjects.filter(obj => 
-      obj.key && obj.key.startsWith('custom_objects.') && 
-      !['contact', 'opportunity', 'business'].includes(obj.key.replace('custom_objects.', ''))
+
+    // Filter to only get custom objects (not standard objects from this endpoint)
+    const customObjects = allObjects.filter(obj =>
+      obj.key && obj.key.startsWith('custom_objects.')
     );
-    
+
+    // Add standard objects manually with clear identification
+    const standardObjects = [
+      {
+        id: 'standard_contact',
+        key: 'contact',
+        labels: {
+          singular: 'Contact',
+          plural: 'Contacts'
+        },
+        isStandard: true,
+        icon: 'user',
+        description: 'Standard CRM contact object'
+      },
+      {
+        id: 'standard_opportunity',
+        key: 'opportunity',
+        labels: {
+          singular: 'Opportunity',
+          plural: 'Opportunities'
+        },
+        isStandard: true,
+        icon: 'dollar-sign',
+        description: 'Standard CRM opportunity/deal object'
+      }
+    ];
+
+    // Mark custom objects as non-standard
+    const enhancedCustomObjects = customObjects.map(obj => ({
+      ...obj,
+      isStandard: false
+    }));
+
+    // Combine standard and custom objects
+    const allAvailableObjects = [...standardObjects, ...enhancedCustomObjects];
+
     res.json({
       ...r.data,
-      objects: customObjects,
-      data: customObjects
+      objects: allAvailableObjects,
+      data: allAvailableObjects
     });
   } catch (e) {
     console.error('objects lookup error:', e?.response?.status, e?.response?.data || e.message);
@@ -77,60 +113,101 @@ router.get('/:objectKey/schema', requireAuth, async (req, res) => {
   }
 });
 
-// Get fields for object
+// Get fields for object (both standard and custom)
 router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
   let { objectKey } = req.params;
-  
+
   try {
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
-    const apiObjectKey = `custom_objects.${cleanKey}`;
-    
+    const isStandard = isStandardObject(cleanKey);
     const token = await withAccessToken(locationId);
-    const response = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        Version: '2021-07-28'
-      },
-      params: { locationId }
-    });
 
-    const fields = response.data?.fields || [];
-    const parentIds = [...new Set(fields.map(f => f.parentId).filter(Boolean))];
-    
-    const folders = {};
-    for (const parentId of parentIds) {
-      try {
-        const folderToken = await withAccessToken(locationId);
-        const folderResponse = await axios.get(
-          `${API_BASE}/custom-fields/${parentId}`,
-          { 
-            headers: {
-              Authorization: `Bearer ${folderToken}`,
-              Version: '2021-07-28'
+    let response;
+    let fields = [];
+    let folders = {};
+
+    if (isStandard) {
+      // Fetch standard object fields using different endpoint
+      const endpoint = getFieldFetchEndpoint(cleanKey, locationId);
+      response = await axios.get(endpoint.url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        },
+        params: endpoint.params
+      });
+
+      // Standard object response structure
+      const customFields = response.data?.customFields || [];
+
+      // Filter to only custom fields for the specified model
+      fields = customFields.filter(field =>
+        field.model === cleanKey
+      ).map(field => ({
+        id: field.id,
+        name: field.name,
+        fieldKey: field.fieldKey,
+        dataType: field.dataType,
+        placeholder: field.placeholder,
+        position: field.position,
+        model: field.model,
+        picklistOptions: field.picklistOptions,
+        isStandard: true
+      }));
+
+      // No folders for standard objects
+      folders = {};
+    } else {
+      // Custom object - use existing logic
+      const apiObjectKey = `custom_objects.${cleanKey}`;
+      response = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        },
+        params: { locationId }
+      });
+
+      fields = response.data?.fields || [];
+      const parentIds = [...new Set(fields.map(f => f.parentId).filter(Boolean))];
+
+      // Fetch folder information for custom objects
+      for (const parentId of parentIds) {
+        try {
+          const folderToken = await withAccessToken(locationId);
+          const folderResponse = await axios.get(
+            `${API_BASE}/custom-fields/${parentId}`,
+            {
+              headers: {
+                Authorization: `Bearer ${folderToken}`,
+                Version: '2021-07-28'
+              }
             }
-          }
-        );
-        folders[parentId] = {
-          id: parentId,
-          name: folderResponse.data?.name || folderResponse.data?.data?.name || `Folder ${parentId}`,
-          ...folderResponse.data
-        };
-      } catch (e) {
-        console.error(`Failed to fetch folder ${parentId}:`, e?.response?.data || e.message);
-        folders[parentId] = { id: parentId, name: `Unknown Folder ${parentId}` };
+          );
+          folders[parentId] = {
+            id: parentId,
+            name: folderResponse.data?.name || folderResponse.data?.data?.name || `Folder ${parentId}`,
+            ...folderResponse.data
+          };
+        } catch (e) {
+          console.error(`Failed to fetch folder ${parentId}:`, e?.response?.data || e.message);
+          folders[parentId] = { id: parentId, name: `Unknown Folder ${parentId}` };
+        }
       }
+
+      // Enhance fields with folder information
+      fields = fields.map(field => ({
+        ...field,
+        folder: field.parentId ? folders[field.parentId] : null
+      }));
     }
-    
-    const enhancedFields = fields.map(field => ({
-      ...field,
-      folder: field.parentId ? folders[field.parentId] : null
-    }));
-    
+
     res.json({
-      ...response.data,
-      fields: enhancedFields,
-      folders: Object.values(folders)
+      objectKey: cleanKey,
+      fields: fields,
+      folders: Object.values(folders),
+      isStandardObject: isStandard
     });
   } catch (e) {
     console.error(`Failed to fetch fields for object ${objectKey}:`, e?.response?.data || e.message);

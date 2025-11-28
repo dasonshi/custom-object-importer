@@ -7,6 +7,14 @@ import { normalizeDataType } from '../../utils/dataTransformers.js';
 import { handleAPIError } from '../../utils/apiHelpers.js';
 import { withAccessToken, API_BASE } from '../../services/tokenService.js';
 import axios from 'axios';
+import {
+  isStandardObject,
+  validateFieldName,
+  getFieldCreateEndpoint,
+  formatFieldPayload,
+  normalizeFieldResponse,
+  delay
+} from '../../utils/objectHelpers.js';
 
 const router = Router();
 const upload = multer({ dest: '/tmp' });
@@ -349,97 +357,116 @@ router.post('/objects/import', requireAuth, upload.single('objects'), async (req
 
 // ... continuing in src/routes/imports/index.js after the objects import route
 
-// Import fields for a specific object
+// Import fields for a specific object (both standard and custom)
 router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fields'), async (req, res) => {
   const locationId = req.locationId;
   const { objectKey } = req.params;
-  
+
   if (!req.file) {
     return res.status(400).json({ error: 'Fields CSV file is required' });
   }
 
   try {
-    // Clean the object key
+    // Clean the object key and detect type
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
-    const apiObjectKey = `custom_objects.${cleanKey}`;
-    
-    // Verify the object exists
-    const token = await withAccessToken(locationId);
-    const listSchemas = await axios.get(`${API_BASE}/objects/`, {
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        Version: '2021-07-28'
-      },
-      params: { locationId }
-    });
+    const isStandard = isStandardObject(cleanKey);
+    const apiObjectKey = isStandard ? cleanKey : `custom_objects.${cleanKey}`;
 
-    const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
-    const schema = objects.find(obj => obj.key === objectKey || obj.key === apiObjectKey);
-    
-    if (!schema) {
-      return res.status(404).json({ error: `Object ${objectKey} not found` });
+    // Verify the object exists (skip for standard objects as they always exist)
+    const token = await withAccessToken(locationId);
+    let schema = null;
+
+    if (isStandard) {
+      // Standard objects always exist, create a mock schema
+      schema = {
+        id: `standard_${cleanKey}`,
+        key: cleanKey,
+        labels: {
+          singular: cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1),
+          plural: cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1) + 's'
+        }
+      };
+    } else {
+      // Verify custom object exists
+      const listSchemas = await axios.get(`${API_BASE}/objects/`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: '2021-07-28'
+        },
+        params: { locationId }
+      });
+
+      const objects = Array.isArray(listSchemas.data?.objects) ? listSchemas.data.objects : [];
+      schema = objects.find(obj => obj.key === objectKey || obj.key === apiObjectKey);
+
+      if (!schema) {
+        return res.status(404).json({ error: `Object ${objectKey} not found` });
+      }
     }
 
     const fields = await parseCSV(req.file.path);
     const created = [];
     const errors = [];
     const skipped = [];
-    
-    // Ensure we have a folder for the fields
-    let defaultFolderId = null;
-    
-    try {
-      const existingResp = await axios.get(
-        `${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`,
-        {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            Version: '2021-07-28'
-          },
-          params: { locationId }
-        }
-      );
-      
-      // The API returns folders separately
-      const folders = existingResp.data?.folders || [];
-      
-      if (folders.length > 0) {
-        defaultFolderId = folders[0].id;
-        console.log(`Using existing folder "${folders[0].name}" (${defaultFolderId})`);
-      }
-    } catch (e) {
-      if (e?.response?.status === 404) {
-        console.log('No fields exist yet for this object');
-      }
-    }
-    
-    // If no folder exists, create one
-    if (!defaultFolderId) {
-      const folderPayload = {
-        locationId: locationId,
-        name: 'General',
-        dataType: 'GROUP',
-        fieldKey: `${apiObjectKey}.general_folder`,
-        objectKey: apiObjectKey
-      };
 
+    // Ensure we have a folder for custom object fields (skip for standard objects)
+    let defaultFolderId = null;
+
+    if (!isStandard) {
+      // Only create/fetch folders for custom objects
       try {
-        const folderResp = await axios.post(`${API_BASE}/custom-fields/`, folderPayload, {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            Version: '2021-07-28'
+        const existingResp = await axios.get(
+          `${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Version: '2021-07-28'
+            },
+            params: { locationId }
           }
-        });
-        
-        defaultFolderId = folderResp.data?.id || folderResp.data?.data?.id;
-        console.log(`Created new folder "General" (${defaultFolderId})`);
+        );
+
+        // The API returns folders separately
+        const folders = existingResp.data?.folders || [];
+
+        if (folders.length > 0) {
+          defaultFolderId = folders[0].id;
+          console.log(`Using existing folder "${folders[0].name}" (${defaultFolderId})`);
+        }
       } catch (e) {
-        console.error('Failed to create default folder:', e?.response?.data || e.message);
+        if (e?.response?.status === 404) {
+          console.log('No fields exist yet for this object');
+        }
+      }
+
+      // If no folder exists, create one
+      if (!defaultFolderId) {
+        const folderPayload = {
+          locationId: locationId,
+          name: 'General',
+          dataType: 'GROUP',
+          fieldKey: `${apiObjectKey}.general_folder`,
+          objectKey: apiObjectKey
+        };
+
+        try {
+          const folderResp = await axios.post(`${API_BASE}/custom-fields/`, folderPayload, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Version: '2021-07-28'
+            }
+          });
+
+          defaultFolderId = folderResp.data?.id || folderResp.data?.data?.id;
+          console.log(`Created new folder "General" (${defaultFolderId})`);
+        } catch (e) {
+          console.error('Failed to create default folder:', e?.response?.data || e.message);
+        }
       }
     }
     
+    // Process each field
     for (const row of fields) {
-      // Generate field key from name
       const fieldName = row.name;
       if (!fieldName) {
         console.warn('Skipping field row without name:', row);
@@ -447,105 +474,76 @@ router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fie
         continue;
       }
 
-      // Generate a clean field key from the name
-      const fieldKey = fieldName.toLowerCase()
-        .replace(/[^a-z0-9\s_-]/g, '') // Remove special chars
-        .replace(/\s+/g, '_')           // Replace spaces with underscores
-        .replace(/_+/g, '_')            // Remove duplicate underscores
-        .replace(/^_|_$/g, '');         // Trim underscores
-
       try {
+        // Validate field name for standard objects
+        if (isStandard) {
+          try {
+            validateFieldName(fieldName, cleanKey);
+          } catch (e) {
+            skipped.push({
+              fieldName,
+              reason: e.message
+            });
+            console.log(`Skipping reserved field name: ${fieldName}`);
+            continue;
+          }
+        }
+
         // Parse options if provided
         let options = null;
         if (row.options) {
-          try { 
+          try {
             options = JSON.parse(row.options);
             if (!Array.isArray(options)) {
               options = String(row.options).split('|').map(s => s.trim()).filter(Boolean);
             }
-          } catch { 
+          } catch {
             options = String(row.options).split('|').map(s => s.trim()).filter(Boolean);
           }
         }
 
-        // Normalize data type
-        const dataType = normalizeDataType(row.data_type || 'TEXT');
-
-        const fieldPayload = {
-          locationId: locationId,
+        // Prepare field data
+        const fieldData = {
           name: fieldName,
+          dataType: normalizeDataType(row.data_type || 'TEXT'),
           description: row.description || "",
           placeholder: row.placeholder || "",
-          showInForms: row.show_in_forms !== undefined ? 
-            String(row.show_in_forms).toLowerCase() === 'true' : true,
-          dataType: dataType,
-          fieldKey: `${apiObjectKey}.${fieldKey}`,
-          objectKey: apiObjectKey
+          show_in_forms: row.show_in_forms,
+          position: row.position,
+          options: options,
+          acceptedFormat: row.accepted_formats,
+          isMultipleFile: row.is_multiple_file,
+          maxNumberOfFiles: row.max_number_of_files || row.max_file_limit,
+          textBoxListOptions: row.textbox_list_options
         };
 
-        // For custom objects, parentId (folder) is required
-        const providedFolderId = row.existing_folder_id || row.folder_id || row.parent_id || '';
-        
-        if (providedFolderId && providedFolderId.trim() !== '') {
-          fieldPayload.parentId = providedFolderId.trim();
-        } else if (defaultFolderId) {
-          fieldPayload.parentId = defaultFolderId;
-        }
+        // Format payload based on object type
+        const fieldPayload = formatFieldPayload(cleanKey, fieldData, locationId, defaultFolderId);
 
-        // Add options for relevant field types
-        if (options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(dataType)) {
-          fieldPayload.options = options.map(opt => {
-            if (typeof opt === 'string') {
-              return { 
-                key: opt.toLowerCase().replace(/[^a-z0-9]/g, '_'), 
-                label: opt 
-              };
-            }
-            return {
-              key: opt.key || opt.label?.toLowerCase().replace(/[^a-z0-9]/g, '_') || opt,
-              label: opt.label || opt.key || opt,
-              ...(opt.url && { url: opt.url })
-            };
-          });
-        }
+        // Get the correct endpoint
+        const endpoint = getFieldCreateEndpoint(cleanKey, locationId);
 
-        // Add file upload specific attributes
-        if (dataType === 'FILE_UPLOAD') {
-          if (row.accepted_formats && row.accepted_formats.trim() !== '') {
-            // Clean up formats - ensure they start with a dot
-            const formats = row.accepted_formats.split(',')
-              .map(f => f.trim())
-              .filter(f => f !== '') // Remove empty strings
-              .map(f => f.startsWith('.') ? f : `.${f}`);
-            
-            // acceptedFormats should be an array, not a string
-            if (formats.length > 0) {
-              fieldPayload.acceptedFormats = formats;
-            }
-          }
-          if (row.max_file_limit) {
-            fieldPayload.maxFileLimit = parseInt(row.max_file_limit) || 1;
-          }
-        }
+        console.log(`Creating ${isStandard ? 'standard' : 'custom'} field ${fieldName} for ${cleanKey}`);
+        console.log('Endpoint:', endpoint);
+        console.log('Payload:', JSON.stringify(fieldPayload, null, 2));
 
-        // Add radio specific attribute
-        if (dataType === 'RADIO' && row.allow_custom_option !== undefined) {
-          fieldPayload.allowCustomOption = String(row.allow_custom_option).toLowerCase() === 'true';
-        }
-
-        console.log(`Creating field ${fieldName}, payload:`, JSON.stringify(fieldPayload, null, 2));
-        
-        const createField = await axios.post(`${API_BASE}/custom-fields/`, fieldPayload, {
-          headers: { 
+        // Create the field
+        const createField = await axios.post(endpoint, fieldPayload, {
+          headers: {
             Authorization: `Bearer ${token}`,
             Version: '2021-07-28'
           }
         });
-        
-        created.push({ 
-          fieldKey, 
-          id: createField.data?.id || createField.data?.data?.id || createField.data?.field?.id,
-          label: fieldName 
+
+        // Add rate limiting delay to prevent API throttling
+        await delay(200);
+
+        // Normalize response and track success
+        const field = normalizeFieldResponse(createField.data, isStandard);
+        created.push({
+          fieldKey: field.fieldKey || fieldName,
+          id: field.id,
+          label: fieldName
         });
       } catch (e) {
         const errorMessage = e?.response?.data?.message || e?.response?.data || e.message;
