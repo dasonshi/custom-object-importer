@@ -46,20 +46,22 @@ export class InstallsDB {
   async set(locationId, data) {
     const encryptedAccessToken = this.encryptToken(data.access_token);
     const encryptedRefreshToken = this.encryptToken(data.refresh_token);
-    
+
     await this.prisma.install.upsert({
       where: { locationId },
       update: {
         accessToken: encryptedAccessToken,
         refreshToken: encryptedRefreshToken,
         expiresAt: BigInt(data.expires_at),
+        companyId: data.companyId || null,
         updatedAt: new Date()
       },
       create: {
         locationId,
         accessToken: encryptedAccessToken,
         refreshToken: encryptedRefreshToken,
-        expiresAt: BigInt(data.expires_at)
+        expiresAt: BigInt(data.expires_at),
+        companyId: data.companyId || null
       }
     });
   }
@@ -69,13 +71,14 @@ export class InstallsDB {
     const install = await this.prisma.install.findUnique({
       where: { locationId }
     });
-    
+
     if (!install) return null;
-    
+
     return {
       access_token: this.decryptToken(install.accessToken),
       refresh_token: this.decryptToken(install.refreshToken),
-      expires_at: Number(install.expiresAt)
+      expires_at: Number(install.expiresAt),
+      companyId: install.companyId || null
     };
   }
 

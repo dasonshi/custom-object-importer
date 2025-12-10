@@ -240,6 +240,23 @@ router.post('/app-context', express.json(), async (req, res) => {
     // Get cookie location early for use in checks below
     const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 
+    // FALLBACK: If we have cookie but no user (encryptedData failed), reconstruct user from stored companyId
+    // This handles Windows users where postMessage times out but cookie persists
+    if (!user && cookieLocation && await installs.has(cookieLocation)) {
+      const storedInstall = await installs.get(cookieLocation);
+      if (storedInstall?.companyId) {
+        console.log('🔄 Reconstructing user context from stored installation:', {
+          locationId: cookieLocation,
+          companyId: storedInstall.companyId
+        });
+        user = {
+          companyId: storedInstall.companyId,
+          activeLocation: cookieLocation,
+          type: 'location'
+        };
+      }
+    }
+
     // SECURITY: If no encrypted user data and no cookie, require OAuth
     // We cannot safely "guess" which location to authenticate
     if (!user && !cookieLocation && !targetLocationId) {

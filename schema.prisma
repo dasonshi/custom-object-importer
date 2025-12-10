@@ -10,6 +10,7 @@ datasource db {
 model Install {
   id           String   @id @default(cuid())
   locationId   String   @unique @map("location_id")
+  companyId    String?  @map("company_id")    // Company ID for fallback auth when encryptedData fails
   accessToken  String   @map("access_token")  // Encrypted
   refreshToken String   @map("refresh_token") // Encrypted
   expiresAt    BigInt   @map("expires_at")    // Store as timestamp
@@ -18,6 +19,7 @@ model Install {
 
   @@map("installs")
   @@index([locationId])
+  @@index([companyId])
 }
 
 model AgencyInstall {
