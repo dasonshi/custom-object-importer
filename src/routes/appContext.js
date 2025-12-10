@@ -240,6 +240,14 @@ router.post('/app-context', express.json(), async (req, res) => {
     // Get cookie location early for use in checks below
     const cookieLocation = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 
+    // Debug: log cookie status for troubleshooting Windows auth issues
+    console.log('🍪 Cookie check:', {
+      hasCookie: !!cookieLocation,
+      cookieLocation: cookieLocation || 'none',
+      signedCookies: Object.keys(req.signedCookies || {}),
+      allCookies: Object.keys(req.cookies || {})
+    });
+
     // FALLBACK: If we have cookie but no user (encryptedData failed), reconstruct user from stored companyId
     // This handles Windows users where postMessage times out but cookie persists
     if (!user && cookieLocation && await installs.has(cookieLocation)) {
