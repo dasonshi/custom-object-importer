@@ -51,9 +51,9 @@ function isSafari(userAgent) {
 
 // Authentication middleware
 export async function requireAuth(req, res, next) {
-  // SECURITY: Only trust the signed cookie for authentication
+  // Check signed cookie first, fall back to unsigned cookie (for Safari/partitioned cookies)
   // Query parameters and headers are NOT trusted for auth
-  const locationId = req.signedCookies?.ghl_location || null;
+  const locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
 
   if (!locationId) {
     const userAgent = req.headers['user-agent'] || '';
