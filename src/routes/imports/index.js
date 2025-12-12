@@ -291,63 +291,96 @@ router.post('/objects/import', requireAuth, upload.single('objects'), async (req
     }
 
     const created = [];
-    for (const row of objects) {
-      const objectKey = row.object_key ? 
-        String(row.object_key).trim() : 
-        String(row.name || '').trim().toLowerCase().replace(/\s+/g, '_');
-      
-      if (!objectKey || !row.name) {
-        console.warn('Skipping object row without name:', row);
-        continue;
-      }
-      
-      if (schemaIdByKey[objectKey]) {
-        console.log(`Schema ${objectKey} already exists, skipping`);
-        continue;
-      }
+    const skipped = [];
+    const errors = [];
 
-      const singular = String(row.name).trim();
-      const plural = String(row.plural || `${singular}s`).trim();
-      const fqObjectKey = `custom_objects.${objectKey}`;
+    for (let rowIndex = 0; rowIndex < objects.length; rowIndex++) {
+      const row = objects[rowIndex];
+      try {
+        const objectKey = row.object_key ?
+          String(row.object_key).trim() :
+          String(row.name || '').trim().toLowerCase().replace(/\s+/g, '_');
 
-      const primaryFieldName = String(row.primary_field_name || 'Name').trim();
-      const primaryKey = primaryFieldName.toLowerCase().replace(/\s+/g, '_');
-      const fqPrimaryKey = `custom_objects.${objectKey}.${primaryKey}`;
-
-      const payload = {
-        labels: { singular, plural },
-        key: fqObjectKey,
-        description: row.description || '',
-        primaryDisplayPropertyDetails: {
-          key: fqPrimaryKey,
-          name: primaryFieldName,
-          dataType: row.primary_field_type || 'TEXT'
-        },
-        locationId
-      };
-
-      const token = await withAccessToken(locationId);
-      const createResp = await axios.post(`${API_BASE}/objects/`, payload, {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          Version: '2021-07-28'
+        if (!objectKey || !row.name) {
+          skipped.push({
+            recordIndex: rowIndex,
+            name: row.name || `Row ${rowIndex + 1}`,
+            reason: 'Missing object name'
+          });
+          console.warn('Skipping object row without name:', row);
+          continue;
         }
-      });
-      const createdId = createResp.data?.id || createResp.data?.data?.id || createResp.data?.object?.id;
-      
-      if (createdId) {
-        schemaIdByKey[objectKey] = createdId;
-        created.push({ objectKey, id: createdId, name: singular });
+
+        if (schemaIdByKey[objectKey]) {
+          skipped.push({
+            recordIndex: rowIndex,
+            name: row.name,
+            reason: 'Object already exists'
+          });
+          console.log(`Schema ${objectKey} already exists, skipping`);
+          continue;
+        }
+
+        const singular = String(row.name).trim();
+        const plural = String(row.plural || `${singular}s`).trim();
+        const fqObjectKey = `custom_objects.${objectKey}`;
+
+        const primaryFieldName = String(row.primary_field_name || 'Name').trim();
+        const primaryKey = primaryFieldName.toLowerCase().replace(/\s+/g, '_');
+        const fqPrimaryKey = `custom_objects.${objectKey}.${primaryKey}`;
+
+        const payload = {
+          labels: { singular, plural },
+          key: fqObjectKey,
+          description: row.description || '',
+          primaryDisplayPropertyDetails: {
+            key: fqPrimaryKey,
+            name: primaryFieldName,
+            dataType: row.primary_field_type || 'TEXT'
+          },
+          locationId
+        };
+
+        const token = await withAccessToken(locationId);
+        const createResp = await axios.post(`${API_BASE}/objects/`, payload, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          }
+        });
+        const createdId = createResp.data?.id || createResp.data?.data?.id || createResp.data?.object?.id;
+
+        if (createdId) {
+          schemaIdByKey[objectKey] = createdId;
+          created.push({ objectKey, id: createdId, name: singular });
+        }
+      } catch (e) {
+        const apiError = e?.response?.data;
+        errors.push({
+          recordIndex: rowIndex,
+          name: row.name || `Row ${rowIndex + 1}`,
+          error: apiError?.message || e.message,
+          errorCode: apiError?.error || 'Error',
+          statusCode: apiError?.statusCode || e?.response?.status
+        });
+        console.error(`Failed to create object ${row.name} (row ${rowIndex + 1}):`, apiError || e.message);
       }
     }
 
     await cleanupTempFiles([req.file.path]);
 
     res.json({
-      success: true,
+      success: errors.length === 0,
       message: `Processed ${objects.length} objects, created ${created.length} new schemas`,
       created,
-      existing: Object.keys(schemaIdByKey).filter(key => !created.find(c => c.objectKey === key))
+      skipped,
+      errors,
+      summary: {
+        total: objects.length,
+        created: created.length,
+        skipped: skipped.length,
+        failed: errors.length
+      }
     });
 
   } catch (e) {
@@ -466,7 +499,8 @@ router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fie
     }
     
     // Process each field
-    for (const row of fields) {
+    for (let rowIndex = 0; rowIndex < fields.length; rowIndex++) {
+      const row = fields[rowIndex];
       const fieldName = row.name;
       if (!fieldName) {
         console.warn('Skipping field row without name:', row);
@@ -556,11 +590,16 @@ router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fie
           });
           console.log(`Field ${fieldName} already exists, skipping`);
         } else {
-          errors.push({ 
-            fieldName, 
-            error: errorMessage
+          const apiError = e?.response?.data;
+          errors.push({
+            recordIndex: rowIndex,
+            fieldName,
+            name: fieldName,
+            error: apiError?.message || errorMessage,
+            errorCode: apiError?.error || 'Error',
+            statusCode: apiError?.statusCode || e?.response?.status
           });
-          console.error(`Failed to create field ${fieldName}:`, errorMessage);
+          console.error(`Failed to create field ${fieldName} (row ${rowIndex + 1}):`, errorMessage);
         }
       }
     }
@@ -789,7 +828,8 @@ router.post('/associations/types/import', requireAuth, upload.single('associatio
       return /^custom_objects\./.test(k) ? k : (['contact','opportunity','business'].includes(k) ? k : `custom_objects.${k}`);
     };
 
-    for (const row of rows) {
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const row = rows[rowIndex];
       try {
         const key = String(row.association_key || row.key || '').trim();
         const firstObjectKey = ensureKey(String(row.first_object_key || '').trim());
@@ -821,12 +861,19 @@ router.post('/associations/types/import', requireAuth, upload.single('associatio
         });
       } catch (e) {
         // If API returns "already exists"/duplicate, treat as skip
-        const msg = e?.response?.data || e.message;
+        const apiError = e?.response?.data;
+        const msg = apiError?.message || apiError || e.message;
         if (/(exist|duplicate)/i.test(String(msg))) {
           skipped.push({ row, reason: 'already exists' });
         } else {
-          errors.push({ row, error: msg });
-          console.error('Association type create error:', msg);
+          errors.push({
+            recordIndex: rowIndex,
+            name: row.association_key || row.key || `Row ${rowIndex + 1}`,
+            error: typeof msg === 'string' ? msg : JSON.stringify(msg),
+            errorCode: apiError?.error || 'Error',
+            statusCode: apiError?.statusCode || e?.response?.status
+          });
+          console.error(`Association type create error (row ${rowIndex + 1}):`, msg);
         }
       }
     }
@@ -858,7 +905,8 @@ router.post('/custom-values/import', requireAuth, upload.single('customValues'),
     const updated = [];
     const errors = [];
 
-    for (const row of customValues) {
+    for (let rowIndex = 0; rowIndex < customValues.length; rowIndex++) {
+      const row = customValues[rowIndex];
       try {
         const payload = {
           name: String(row.name || '').trim(),
@@ -879,8 +927,8 @@ router.post('/custom-values/import', requireAuth, upload.single('customValues'),
             payload,
             { headers }
           );
-          updated.push({ 
-            id: customValueId, 
+          updated.push({
+            id: customValueId,
             name: payload.name,
             value: payload.value
           });
@@ -891,18 +939,22 @@ router.post('/custom-values/import', requireAuth, upload.single('customValues'),
             payload,
             { headers }
           );
-          created.push({ 
+          created.push({
             id: result.data?.id || result.data?.data?.id,
             name: payload.name,
             value: payload.value
           });
         }
       } catch (e) {
-        errors.push({ 
-          name: row.name || 'unnamed', 
-          error: e?.response?.data || e.message 
+        const apiError = e?.response?.data;
+        errors.push({
+          recordIndex: rowIndex,
+          name: row.name || 'unnamed',
+          error: apiError?.message || (typeof apiError === 'string' ? apiError : e.message),
+          errorCode: apiError?.error || 'Error',
+          statusCode: apiError?.statusCode || e?.response?.status
         });
-        console.error(`Failed to process custom value ${row.name}:`, e?.response?.data || e.message);
+        console.error(`Failed to process custom value ${row.name} (row ${rowIndex + 1}):`, apiError || e.message);
       }
     }
 
@@ -945,7 +997,8 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
     const errors = [];
     const skipped = [];
 
-    for (const row of relations) {
+    for (let rowIndex = 0; rowIndex < relations.length; rowIndex++) {
+      const row = relations[rowIndex];
       try {
         // Required fields
         const associationId = String(row.association_id || '').trim();
@@ -1026,11 +1079,15 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
             reason: 'Relation already exists'
           });
         } else {
-          errors.push({ 
-            row,
-            error: msg
+          const apiError = e?.response?.data;
+          errors.push({
+            recordIndex: rowIndex,
+            name: `${row.first_record_id || 'unknown'} ↔ ${row.second_record_id || 'unknown'}`,
+            error: typeof msg === 'string' ? msg : JSON.stringify(msg),
+            errorCode: apiError?.error || 'Error',
+            statusCode: apiError?.statusCode || e?.response?.status
           });
-          console.error('Relation create error:', msg);
+          console.error(`Relation create error (row ${rowIndex + 1}):`, msg);
         }
       }
     }
