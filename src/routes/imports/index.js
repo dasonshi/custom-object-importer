@@ -626,7 +626,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
     const records = await parseCSV(req.file.path);
     const created = [];
     const errors = [];
-    for (const row of records) {
+    for (let rowIndex = 0; rowIndex < records.length; rowIndex++) {
+      const row = records[rowIndex];
       try {
         const properties = {};
         const recordId = row.id;
@@ -735,11 +736,16 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         });
 
       } catch (e) {
-        errors.push({ 
-          externalId: row.external_id, 
-          error: e?.response?.data || e.message 
+        const apiError = e?.response?.data;
+        errors.push({
+          recordIndex: rowIndex,
+          externalId: row.external_id,
+          name: row.external_id || Object.values(row).find(v => v && typeof v === 'string')?.substring(0, 50),
+          error: apiError?.message || e.message,
+          errorCode: apiError?.error || 'Error',
+          statusCode: apiError?.statusCode || e?.response?.status
         });
-        console.error(`Failed to process record:`, e?.response?.data || e.message);
+        console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message);
       }
     }
 
