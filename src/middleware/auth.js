@@ -51,23 +51,39 @@ function isSafari(userAgent) {
 
 // Authentication middleware
 export async function requireAuth(req, res, next) {
+  const userAgent = req.headers['user-agent'] || '';
+  const isSafariBrowser = isSafari(userAgent);
+
+  // Always add Safari warning header so frontend can show proactive warning
+  if (isSafariBrowser) {
+    res.set('X-Safari-Cookie-Warning', 'true');
+  }
+
   // Check signed cookie first, fall back to unsigned cookie (for Safari/partitioned cookies)
   // Query parameters and headers are NOT trusted for auth
   const locationId = req.signedCookies?.ghl_location || req.cookies?.ghl_location || null;
+  const queryLocationId = req.query.locationId;
 
   if (!locationId) {
-    const userAgent = req.headers['user-agent'] || '';
-    const isSafariBrowser = isSafari(userAgent);
+    // Log details for debugging intermittent Safari issues
+    console.warn('🔐 Auth failed - no cookie found', {
+      path: req.path,
+      isSafari: isSafariBrowser,
+      queryLocationId: queryLocationId || 'none',
+      hasCookies: Object.keys(req.cookies || {}).length > 0,
+      hasSignedCookies: Object.keys(req.signedCookies || {}).length > 0
+    });
 
     // Provide Safari-specific messaging for cookie issues
     if (isSafariBrowser) {
       return res.status(401).json({
         error: 'safari_cookie_blocked',
-        message: 'Safari is blocking authentication cookies. Please try Chrome, Firefox, or Edge for the best experience.',
-        userAgent: userAgent,
+        message: 'Safari is blocking authentication cookies. Please use Chrome, Firefox, or Edge instead.',
+        isSafari: true,
         troubleshooting: {
-          recommendation: 'Use Chrome, Firefox, or Edge browser',
-          safariIssue: 'Safari\'s privacy settings block cross-site cookies required for this app',
+          primaryFix: 'Open this app in Chrome, Firefox, or Microsoft Edge',
+          alternativeFix: 'In Safari Settings → Privacy → uncheck "Prevent cross-site tracking"',
+          explanation: 'Safari blocks third-party cookies in iframes by default. This is a browser privacy feature that affects all GHL Marketplace apps.',
           learnMore: 'https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/'
         }
       });
@@ -81,14 +97,22 @@ export async function requireAuth(req, res, next) {
 
   const hasInstall = await installs.has(locationId);
   if (!hasInstall) {
+    console.warn('🔐 Auth failed - installation not found', {
+      locationId,
+      isSafari: isSafariBrowser
+    });
     clearAuthCookie(res);
     return res.status(401).json({
       error: 'Installation not found',
-      message: 'Please re-authenticate'
+      message: 'Please re-authenticate',
+      ...(isSafariBrowser && {
+        safariNote: 'If you just installed the app, Safari may have blocked the authentication. Try using Chrome or Firefox.'
+      })
     });
   }
 
   req.locationId = locationId;
+  req.isSafari = isSafariBrowser;
   next();
 }
 

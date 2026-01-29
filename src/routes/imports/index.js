@@ -1,6 +1,7 @@
 // src/routes/imports/index.js
 import { Router } from 'express';
 import multer from 'multer';
+import pLimit from 'p-limit';
 import { requireAuth, validateTenant } from '../../middleware/auth.js';
 import { parseCSV, cleanupTempFiles } from '../../utils/csvParser.js';
 import { normalizeDataType } from '../../utils/dataTransformers.js';
@@ -13,7 +14,8 @@ import {
   getFieldCreateEndpoint,
   formatFieldPayload,
   normalizeFieldResponse,
-  delay
+  delay,
+  retryWithBackoff
 } from '../../utils/objectHelpers.js';
 
 const router = Router();
@@ -663,10 +665,12 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
       }
     });
     const records = await parseCSV(req.file.path);
-    const created = [];
-    const errors = [];
-    for (let rowIndex = 0; rowIndex < records.length; rowIndex++) {
-      const row = records[rowIndex];
+
+    // Process records in parallel with concurrency limit for better performance
+    const limit = pLimit(5); // Max 5 concurrent API requests
+
+    // Helper function to process a single record
+    const processRecord = async (row, rowIndex) => {
       try {
         const properties = {};
         const recordId = row.id;
@@ -674,10 +678,10 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           // Skip system fields, CSV parser metadata, and empty values
           if (['object_key', 'id', 'external_id', 'owner', 'followers', 'association_id', 'related_record_id', 'association_type', '__parsed_extra'].includes(k)) continue;
           if (v === '' || v === null || v === undefined) continue;
-          
+
           // Use the actual field type from schema
           const fieldType = fieldTypeMap[k];
-          
+
           if (fieldType === 'MONETORY') {
             properties[k] = {
               currency: "default",
@@ -724,69 +728,87 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         let action = 'created';
         if (recordId) {
           try {
-            // First verify the record exists
-            await axios.get(
+            // First verify the record exists (with retry for rate limits)
+            await retryWithBackoff(() => axios.get(
               `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-              { 
+              {
                 headers,
                 params: { locationId }
               }
-            );
-            // Record exists, update it
-            recordResult = await axios.put(
+            ));
+            // Record exists, update it (with retry for rate limits)
+            recordResult = await retryWithBackoff(() => axios.put(
               `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
               updateRequestBody,
-              { 
+              {
                 headers,
                 params: { locationId }
               }
-            );
+            ));
             action = 'updated';
           } catch (getError) {
             if (getError?.response?.status === 404) {
               console.log(`Record ID ${recordId} not found, creating new record instead`);
-              // Record doesn't exist, create new one
-              recordResult = await axios.post(
+              // Record doesn't exist, create new one (with retry for rate limits)
+              recordResult = await retryWithBackoff(() => axios.post(
                 `${API_BASE}/objects/${fullObjectKey}/records`,
                 createRequestBody,
                 { headers }
-              );
+              ));
               action = 'created (id not found)';
             } else {
               throw getError;
             }
           }
-        } else {  
-          // Create new record
-          recordResult = await axios.post(
+        } else {
+          // Create new record (with retry for rate limits)
+          recordResult = await retryWithBackoff(() => axios.post(
             `${API_BASE}/objects/${fullObjectKey}/records`,
             createRequestBody,
             { headers }
-          );
+          ));
         }
 
         const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
 
-        created.push({ 
-          externalId: row.external_id || 'N/A', 
-          id: createdRecordId,
-          properties: Object.keys(properties),
-          action: action
-        });
+        // Add small delay to prevent overwhelming the API
+        await delay(50);
+
+        return {
+          success: true,
+          data: {
+            externalId: row.external_id || 'N/A',
+            id: createdRecordId,
+            properties: Object.keys(properties),
+            action: action
+          }
+        };
 
       } catch (e) {
         const apiError = e?.response?.data;
-        errors.push({
-          recordIndex: rowIndex,
-          externalId: row.external_id,
-          name: row.external_id || Object.values(row).find(v => v && typeof v === 'string')?.substring(0, 50),
-          error: apiError?.message || e.message,
-          errorCode: apiError?.error || 'Error',
-          statusCode: apiError?.statusCode || e?.response?.status
-        });
         console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message);
+        return {
+          success: false,
+          error: {
+            recordIndex: rowIndex,
+            externalId: row.external_id,
+            name: row.external_id || Object.values(row).find(v => v && typeof v === 'string')?.substring(0, 50),
+            error: apiError?.message || e.message,
+            errorCode: apiError?.error || 'Error',
+            statusCode: apiError?.statusCode || e?.response?.status
+          }
+        };
       }
-    }
+    };
+
+    // Process all records in parallel with concurrency limit
+    const results = await Promise.all(
+      records.map((row, rowIndex) => limit(() => processRecord(row, rowIndex)))
+    );
+
+    // Separate successes and failures
+    const created = results.filter(r => r.success).map(r => r.data);
+    const errors = results.filter(r => !r.success).map(r => r.error);
 
     await cleanupTempFiles([req.file.path]);
     

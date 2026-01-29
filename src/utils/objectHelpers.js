@@ -199,3 +199,27 @@ export function getFieldFetchEndpoint(objectKey, locationId) {
 export function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+/**
+ * Retry a function with exponential backoff on 429 rate limit errors
+ * @param {Function} fn - Async function to retry
+ * @param {number} maxRetries - Maximum number of retries (default: 3)
+ * @param {number} baseDelay - Base delay in ms before first retry (default: 1000)
+ * @returns {Promise} Result of the function
+ */
+export async function retryWithBackoff(fn, maxRetries = 3, baseDelay = 1000) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const status = error?.response?.status;
+      if (status === 429 && attempt < maxRetries) {
+        const delayMs = baseDelay * Math.pow(2, attempt);
+        console.log(`Rate limited (429), retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await delay(delayMs);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
