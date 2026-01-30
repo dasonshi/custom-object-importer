@@ -17,6 +17,7 @@ import {
   delay,
   retryWithBackoff
 } from '../../utils/objectHelpers.js';
+import { AdaptiveRateController } from '../../utils/adaptiveRateController.js';
 
 const router = Router();
 const upload = multer({ dest: '/tmp' });
@@ -666,8 +667,9 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
     });
     const records = await parseCSV(req.file.path);
 
-    // Process records in parallel with concurrency limit for better performance
-    const limit = pLimit(5); // Max 5 concurrent API requests
+    // Use adaptive rate controller based on file size
+    const controller = new AdaptiveRateController(records.length);
+    console.log(`[RecordsImport] Starting import of ${records.length} records for ${fullObjectKey}`);
 
     // Helper function to process a single record
     const processRecord = async (row, rowIndex) => {
@@ -771,8 +773,9 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
 
         const createdRecordId = recordResult.data?.id || recordResult.data?.data?.id || recordId;
 
-        // Add small delay to prevent overwhelming the API
-        await delay(50);
+        // Record success and apply adaptive delay
+        controller.recordSuccess();
+        await controller.applyDelay();
 
         return {
           success: true,
@@ -786,6 +789,13 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
 
       } catch (e) {
         const apiError = e?.response?.data;
+        const statusCode = apiError?.statusCode || e?.response?.status;
+
+        // Report 429s to controller for adaptive rate limiting
+        if (statusCode === 429) {
+          controller.record429();
+        }
+
         console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message);
         return {
           success: false,
@@ -795,23 +805,54 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
             name: row.external_id || Object.values(row).find(v => v && typeof v === 'string')?.substring(0, 50),
             error: apiError?.message || e.message,
             errorCode: apiError?.error || 'Error',
-            statusCode: apiError?.statusCode || e?.response?.status
+            statusCode: statusCode
           }
         };
       }
     };
 
-    // Process all records in parallel with concurrency limit
-    const results = await Promise.all(
-      records.map((row, rowIndex) => limit(() => processRecord(row, rowIndex)))
-    );
+    // Process records in batches with adaptive rate limiting
+    const allResults = [];
+    const batchSize = controller.getBatchSize();
+    const totalBatches = Math.ceil(records.length / batchSize);
+
+    for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+      const batchStart = batchNum * batchSize;
+      const batchEnd = Math.min(batchStart + batchSize, records.length);
+      const batch = records.slice(batchStart, batchEnd);
+
+      console.log(`[RecordsImport] Processing batch ${batchNum + 1}/${totalBatches} (records ${batchStart + 1}-${batchEnd})`);
+
+      // Wait for circuit breaker if tripped
+      await controller.waitIfCircuitBroken();
+
+      // Process batch with current concurrency setting
+      const limit = pLimit(controller.getConcurrency());
+      const batchResults = await Promise.all(
+        batch.map((row, idx) => limit(async () => {
+          // Wait for circuit breaker before each request
+          await controller.waitIfCircuitBroken();
+          return processRecord(row, batchStart + idx);
+        }))
+      );
+
+      allResults.push(...batchResults);
+
+      // Pause between batches (except for last batch)
+      if (batchNum < totalBatches - 1) {
+        await controller.applyBatchPause();
+      }
+    }
 
     // Separate successes and failures
-    const created = results.filter(r => r.success).map(r => r.data);
-    const errors = results.filter(r => !r.success).map(r => r.error);
+    const created = allResults.filter(r => r.success).map(r => r.data);
+    const errors = allResults.filter(r => !r.success).map(r => r.error);
+
+    const stats = controller.getStats();
+    console.log(`[RecordsImport] Complete. Stats:`, stats);
 
     await cleanupTempFiles([req.file.path]);
-    
+
     res.json({
       success: true,
       message: `Processed ${records.length} records for ${objectKey}`,
@@ -822,7 +863,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         total: records.length,
         successful: created.length,
         failed: errors.length
-      }
+      },
+      rateStats: stats
     });
 
   } catch (e) {
