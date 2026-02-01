@@ -86,28 +86,24 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
       position: parseInt(fieldData.position) || 0
     };
 
-    // Add options for dropdown/multi-select/checkbox fields
-    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX'].includes(payload.dataType)) {
+    // Add options for dropdown/multi-select/checkbox/textbox_list fields
+    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(payload.dataType)) {
       // Ensure options is a string before splitting
       const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
       payload.picklistOptions = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt);
     }
 
-    // Add textbox list options if applicable
-    if (fieldData.textBoxListOptions && payload.dataType === 'TEXTBOX_LIST') {
-      payload.textBoxListOptions = fieldData.textBoxListOptions;
-    }
-
     // Add file upload options if applicable
     if (payload.dataType === 'FILE_UPLOAD') {
-      if (fieldData.acceptedFormat) {
-        payload.acceptedFormat = fieldData.acceptedFormat;
+      // Support both old field names and new API field names
+      const acceptedFormats = fieldData.acceptedFormats || fieldData.acceptedFormat || fieldData.accepted_formats;
+      const maxFileLimit = fieldData.maxFileLimit || fieldData.maxNumberOfFiles || fieldData.max_file_limit;
+
+      if (acceptedFormats) {
+        payload.acceptedFormats = acceptedFormats;
       }
-      if (fieldData.isMultipleFile !== undefined) {
-        payload.isMultipleFile = fieldData.isMultipleFile === 'true';
-      }
-      if (fieldData.maxNumberOfFiles) {
-        payload.maxNumberOfFiles = parseInt(fieldData.maxNumberOfFiles);
+      if (maxFileLimit) {
+        payload.maxFileLimit = parseInt(maxFileLimit);
       }
     }
 
@@ -131,11 +127,32 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
       showInForms: fieldData.show_in_forms !== 'false'
     };
 
-    // Add options for dropdown/multi-select/checkbox fields
-    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX'].includes(payload.dataType)) {
+    // Add options for dropdown/multi-select/checkbox/textbox_list fields
+    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(payload.dataType)) {
       // Ensure options is a string before splitting
       const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
-      payload.options = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt).map(opt => ({ label: opt }));
+      // GHL API expects options with key and label
+      payload.options = optionsStr.split('|').map((opt, idx) => {
+        const label = opt.trim();
+        return {
+          key: label.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+          label
+        };
+      }).filter(opt => opt.label);
+    }
+
+    // Add file upload options if applicable
+    if (payload.dataType === 'FILE_UPLOAD') {
+      // Support both old field names and new API field names
+      const acceptedFormats = fieldData.acceptedFormats || fieldData.acceptedFormat || fieldData.accepted_formats;
+      const maxFileLimit = fieldData.maxFileLimit || fieldData.maxNumberOfFiles || fieldData.max_file_limit;
+
+      if (acceptedFormats) {
+        payload.acceptedFormats = acceptedFormats;
+      }
+      if (maxFileLimit) {
+        payload.maxFileLimit = parseInt(maxFileLimit);
+      }
     }
 
     return payload;
