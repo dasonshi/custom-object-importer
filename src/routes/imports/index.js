@@ -698,15 +698,15 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           } else if (fieldType === 'DATE') {
             properties[k] = v; // Keep as string, GHL expects ISO format
           } else if (fieldType === 'PHONE') {
-            // Clean up phone numbers - remove quotes and extra characters
-            let phone = String(v).trim();
-            // Remove surrounding quotes if present
-            phone = phone.replace(/^["']|["']$/g, '');
-            // Ensure it starts with + for international format
-            if (phone && !phone.startsWith('+')) {
-              phone = '+' + phone;
+            // Smart phone number formatting with warning tracking
+            const { formatPhoneNumber } = await import('../../utils/phoneFormatter.js');
+            let phone = String(v).trim().replace(/^["']|["']$/g, '');
+            const phoneResult = formatPhoneNumber(phone);
+            properties[k] = phoneResult.formatted;
+            if (phoneResult.warning) {
+              if (!row._phoneWarnings) row._phoneWarnings = [];
+              row._phoneWarnings.push({ field: k, warning: phoneResult.warning });
             }
-            properties[k] = phone;
           } else {
             properties[k] = v;
           }
@@ -783,7 +783,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
             externalId: row.external_id || 'N/A',
             id: createdRecordId,
             properties: Object.keys(properties),
-            action: action
+            action: action,
+            phoneWarnings: row._phoneWarnings || null
           }
         };
 
@@ -848,8 +849,20 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
     const created = allResults.filter(r => r.success).map(r => r.data);
     const errors = allResults.filter(r => !r.success).map(r => r.error);
 
+    // Collect all phone formatting warnings
+    const phoneWarnings = created
+      .filter(r => r.phoneWarnings && r.phoneWarnings.length > 0)
+      .map(r => ({
+        recordId: r.id,
+        externalId: r.externalId,
+        warnings: r.phoneWarnings
+      }));
+
     const stats = controller.getStats();
     console.log(`[RecordsImport] Complete. Stats:`, stats);
+    if (phoneWarnings.length > 0) {
+      console.log(`[RecordsImport] Phone numbers auto-formatted: ${phoneWarnings.length} records`);
+    }
 
     await cleanupTempFiles([req.file.path]);
 
@@ -859,10 +872,12 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
       objectKey,
       created,
       errors,
+      phoneWarnings,
       summary: {
         total: records.length,
         successful: created.length,
-        failed: errors.length
+        failed: errors.length,
+        phoneAutoFormatted: phoneWarnings.length
       },
       rateStats: stats
     });
