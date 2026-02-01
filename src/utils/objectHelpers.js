@@ -86,9 +86,11 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
       position: parseInt(fieldData.position) || 0
     };
 
-    // Add options for dropdown/multi-select fields
-    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO'].includes(payload.dataType)) {
-      payload.picklistOptions = fieldData.options.split('|').map(opt => opt.trim());
+    // Add options for dropdown/multi-select/checkbox fields
+    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX'].includes(payload.dataType)) {
+      // Ensure options is a string before splitting
+      const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
+      payload.picklistOptions = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt);
     }
 
     // Add textbox list options if applicable
@@ -129,9 +131,11 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
       showInForms: fieldData.show_in_forms !== 'false'
     };
 
-    // Add options for dropdown/multi-select fields
-    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO'].includes(payload.dataType)) {
-      payload.options = fieldData.options.split('|').map(opt => ({ label: opt.trim() }));
+    // Add options for dropdown/multi-select/checkbox fields
+    if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX'].includes(payload.dataType)) {
+      // Ensure options is a string before splitting
+      const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
+      payload.options = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt).map(opt => ({ label: opt }));
     }
 
     return payload;
