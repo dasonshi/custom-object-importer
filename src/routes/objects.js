@@ -26,46 +26,41 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
                       Array.isArray(r.data?.data) ? r.data.data :
                       Array.isArray(r.data) ? r.data : [];
 
-    // Filter to only get custom objects (not standard objects from this endpoint)
+    // Filter to only get custom objects
     const customObjects = allObjects.filter(obj =>
       obj.key && obj.key.startsWith('custom_objects.')
     );
 
-    // Add standard objects manually with clear identification
-    // Note: 'business' is the internal GHL name for Companies (can be renamed in GHL settings)
+    // Extract standard objects from GHL response (they include custom labels!)
+    const ghlContactObj = allObjects.find(obj => obj.key === 'contact');
+    const ghlOpportunityObj = allObjects.find(obj => obj.key === 'opportunity');
+    const ghlBusinessObj = allObjects.find(obj => obj.key === 'business');
+
+    // Build standard objects - use GHL labels if available, fallback to defaults
     const standardObjects = [
       {
-        id: 'standard_contact',
+        id: ghlContactObj?.id || 'standard_contact',
         key: 'contact',
-        labels: {
-          singular: 'Contact',
-          plural: 'Contacts'
-        },
+        labels: ghlContactObj?.labels || { singular: 'Contact', plural: 'Contacts' },
         isStandard: true,
         icon: 'user',
         description: 'Standard CRM contact object'
       },
       {
-        id: 'standard_opportunity',
+        id: ghlOpportunityObj?.id || 'standard_opportunity',
         key: 'opportunity',
-        labels: {
-          singular: 'Opportunity',
-          plural: 'Opportunities'
-        },
+        labels: ghlOpportunityObj?.labels || { singular: 'Opportunity', plural: 'Opportunities' },
         isStandard: true,
         icon: 'dollar-sign',
         description: 'Standard CRM opportunity/deal object'
       },
       {
-        id: 'standard_business',
+        id: ghlBusinessObj?.id || 'standard_business',
         key: 'business',
-        labels: {
-          singular: 'Business',
-          plural: 'Businesses'
-        },
+        labels: ghlBusinessObj?.labels || { singular: 'Business', plural: 'Businesses' },
         isStandard: true,
         icon: 'building',
-        description: 'Standard CRM business/company object (may be renamed in your GHL settings)'
+        description: 'Standard CRM business/company object'
       }
     ];
 
