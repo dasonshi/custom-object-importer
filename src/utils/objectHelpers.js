@@ -87,10 +87,11 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
     };
 
     // Add options for dropdown/multi-select/checkbox/textbox_list fields
+    // Standard objects use 'options' as array of strings (not picklistOptions)
     if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(payload.dataType)) {
       // Ensure options is a string before splitting
       const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
-      payload.picklistOptions = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt);
+      payload.options = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt);
     }
 
     // Add file upload options if applicable
