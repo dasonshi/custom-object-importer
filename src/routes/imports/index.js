@@ -689,8 +689,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
               currency: "default",
               value: parseFloat(v) || 0
             };
-          } else if (fieldType === 'MULTIPLE_OPTIONS' || fieldType === 'CHECKBOX') {
-            properties[k] = v.split(',').map(s => s.trim());
+          } else if (fieldType === 'MULTIPLE_OPTIONS' || fieldType === 'CHECKBOX' || fieldType === 'TEXTBOX_LIST') {
+            properties[k] = String(v).split(',').map(s => s.trim());
           } else if (fieldType === 'FILE_UPLOAD') {
             properties[k] = [{ url: v }];
           } else if (fieldType === 'NUMERICAL') {
@@ -717,10 +717,10 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           properties: properties
         };
         if (row.owner) {
-          createRequestBody.owner = row.owner.split(',').map(s => s.trim());
+          createRequestBody.owner = String(row.owner).split(',').map(s => s.trim());
         }
         if (row.followers) {
-          createRequestBody.followers = row.followers.split(',').map(s => s.trim());
+          createRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
         }
         // Build request body for UPDATE (PUT) - only properties
         const updateRequestBody = {
