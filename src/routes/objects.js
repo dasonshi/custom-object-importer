@@ -32,6 +32,7 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
     );
 
     // Add standard objects manually with clear identification
+    // Note: 'business' is the internal GHL name for Companies (can be renamed in GHL settings)
     const standardObjects = [
       {
         id: 'standard_contact',
@@ -54,6 +55,17 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
         isStandard: true,
         icon: 'dollar-sign',
         description: 'Standard CRM opportunity/deal object'
+      },
+      {
+        id: 'standard_business',
+        key: 'business',
+        labels: {
+          singular: 'Business',
+          plural: 'Businesses'
+        },
+        isStandard: true,
+        icon: 'building',
+        description: 'Standard CRM business/company object (may be renamed in your GHL settings)'
       }
     ];
 

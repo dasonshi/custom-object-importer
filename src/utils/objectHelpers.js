@@ -1,7 +1,9 @@
 import { API_BASE } from '../services/tokenService.js';
 
 // Define standard objects supported by the app
-const STANDARD_OBJECTS = Object.freeze(['contact', 'opportunity']);
+// Standard objects supported by GHL (regardless of display name changes)
+// 'business' is the internal name for Companies/Business (can be renamed to Clinics, etc.)
+const STANDARD_OBJECTS = Object.freeze(['contact', 'opportunity', 'business']);
 
 // Define reserved field names that can't be used for custom fields
 const RESERVED_FIELD_NAMES = Object.freeze({
@@ -15,6 +17,10 @@ const RESERVED_FIELD_NAMES = Object.freeze({
     'name', 'pipelineId', 'pipelineStageId', 'status', 'monetaryValue',
     'assignedTo', 'contactId', 'locationId', 'source', 'wonValue',
     'lostValue', 'leadValue', 'stageName', 'createdBy', 'updatedBy'
+  ],
+  business: [
+    'name', 'email', 'phone', 'website', 'address', 'city', 'state',
+    'country', 'postalCode', 'description', 'logoUrl'
   ]
 });
 
