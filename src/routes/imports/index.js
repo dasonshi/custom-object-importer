@@ -157,7 +157,12 @@ router.post('/:locationId', requireAuth, validateTenant, upload.fields([
 
         if (row.type === 'select' || row.type === 'multiselect') {
           try { payload.options = JSON.parse(row.options); }
-          catch { payload.options = (row.options || '').split('|').map(s => s.trim()).filter(Boolean); }
+          catch {
+            // Auto-detect delimiter: use | if present, otherwise use comma
+            const optStr = row.options || '';
+            const delimiter = optStr.includes('|') ? '|' : ',';
+            payload.options = optStr.split(delimiter).map(s => s.trim()).filter(Boolean);
+          }
         }
 
         const fieldPayload = {
@@ -532,10 +537,16 @@ router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fie
           try {
             options = JSON.parse(row.options);
             if (!Array.isArray(options)) {
-              options = String(row.options).split('|').map(s => s.trim()).filter(Boolean);
+              // Auto-detect delimiter: use | if present, otherwise use comma
+              const optStr = String(row.options);
+              const delimiter = optStr.includes('|') ? '|' : ',';
+              options = optStr.split(delimiter).map(s => s.trim()).filter(Boolean);
             }
           } catch {
-            options = String(row.options).split('|').map(s => s.trim()).filter(Boolean);
+            // Auto-detect delimiter: use | if present, otherwise use comma
+            const optStr = String(row.options);
+            const delimiter = optStr.includes('|') ? '|' : ',';
+            options = optStr.split(delimiter).map(s => s.trim()).filter(Boolean);
           }
         }
 

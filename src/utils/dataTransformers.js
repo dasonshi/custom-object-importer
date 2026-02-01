@@ -28,7 +28,10 @@ export function parseOptions(raw) {
       return arr.map(o => (typeof o === 'string' ? { key: o.toLowerCase().replace(/\s+/g,'_'), label: o } : o));
     }
   } catch {}
-  return String(raw).split('|').map(s => s.trim()).filter(Boolean)
+  // Auto-detect delimiter: use | if present, otherwise use comma
+  const str = String(raw);
+  const delimiter = str.includes('|') ? '|' : ',';
+  return str.split(delimiter).map(s => s.trim()).filter(Boolean)
     .map(label => ({ key: label.toLowerCase().replace(/\s+/g,'_'), label }));
 }
 

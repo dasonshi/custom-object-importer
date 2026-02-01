@@ -97,7 +97,7 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
     if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(payload.dataType)) {
       // Ensure options is a string before splitting
       const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
-      payload.options = optionsStr.split('|').map(opt => opt.trim()).filter(opt => opt);
+      payload.options = splitOptions(optionsStr);
     }
 
     // Add file upload options if applicable
@@ -139,13 +139,10 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
       // Ensure options is a string before splitting
       const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
       // GHL API expects options with key and label
-      payload.options = optionsStr.split('|').map((opt, idx) => {
-        const label = opt.trim();
-        return {
-          key: label.toLowerCase().replace(/[^a-z0-9]/g, '_'),
-          label
-        };
-      }).filter(opt => opt.label);
+      payload.options = splitOptions(optionsStr).map(label => ({
+        key: label.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        label
+      }));
     }
 
     // Add file upload options if applicable
@@ -217,6 +214,17 @@ export function getFieldFetchEndpoint(objectKey, locationId) {
       params: { locationId }
     };
   }
+}
+
+/**
+ * Split options string by appropriate delimiter (| or ,)
+ * Auto-detects: if string contains |, split by |. Otherwise split by comma.
+ * @param {string} optionsStr - The options string to split
+ * @returns {string[]} Array of option values
+ */
+function splitOptions(optionsStr) {
+  const delimiter = optionsStr.includes('|') ? '|' : ',';
+  return optionsStr.split(delimiter).map(opt => opt.trim()).filter(opt => opt);
 }
 
 /**
