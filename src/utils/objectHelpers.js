@@ -95,9 +95,12 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
     // Add options for dropdown/multi-select/checkbox/textbox_list fields
     // Standard objects use 'options' as array of strings (not picklistOptions)
     if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(payload.dataType)) {
-      // Ensure options is a string before splitting
-      const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
-      payload.options = splitOptions(optionsStr);
+      // If already an array, use it directly; otherwise parse the string
+      if (Array.isArray(fieldData.options)) {
+        payload.options = fieldData.options.map(opt => typeof opt === 'string' ? opt.trim() : String(opt).trim()).filter(Boolean);
+      } else {
+        payload.options = splitOptions(String(fieldData.options));
+      }
     }
 
     // Add file upload options if applicable
@@ -136,10 +139,15 @@ export function formatFieldPayload(objectKey, fieldData, locationId, folderId = 
 
     // Add options for dropdown/multi-select/checkbox/textbox_list fields
     if (fieldData.options && ['SINGLE_OPTIONS', 'MULTIPLE_OPTIONS', 'RADIO', 'CHECKBOX', 'TEXTBOX_LIST'].includes(payload.dataType)) {
-      // Ensure options is a string before splitting
-      const optionsStr = typeof fieldData.options === 'string' ? fieldData.options : String(fieldData.options);
+      // If already an array, use it directly; otherwise parse the string
+      let optionsArray;
+      if (Array.isArray(fieldData.options)) {
+        optionsArray = fieldData.options.map(opt => typeof opt === 'string' ? opt.trim() : String(opt).trim()).filter(Boolean);
+      } else {
+        optionsArray = splitOptions(String(fieldData.options));
+      }
       // GHL API expects options with key and label
-      payload.options = splitOptions(optionsStr).map(label => ({
+      payload.options = optionsArray.map(label => ({
         key: label.toLowerCase().replace(/[^a-z0-9]/g, '_'),
         label
       }));
