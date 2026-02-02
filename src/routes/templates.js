@@ -22,21 +22,40 @@ router.get('/objects', (req, res) => {
 router.get('/fields/:objectKey', (req, res) => {
   const { objectKey } = req.params;
   const cleanKey = objectKey.replace(/^custom_objects\./, '');
-  
-  const headers = ['name', 'data_type', 'description', 'placeholder', 'show_in_forms', 'options', 'accepted_formats', 'max_file_limit', 'allow_custom_option', 'existing_folder_id'];
-  
-  const examples = [
-    ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', '',''],
-    ['Price', 'MONETORY', 'Product price in USD', '99.99', 'true', '', '', '', '',''],
-    ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', '',''],
-    ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', '',''],
-    ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', '',''],
-    ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', '',''],
-    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', 'Yes|No', '', '', '',''],
-    ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', '',''],
-    ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png', '5', '',''],
-    ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', '',''],
-    ['Support Phone', 'PHONE', 'Customer support number', '(555) 123-4567', 'false', '', '', '', '','']
+
+  // Check if standard object (folders not supported by GHL for these)
+  const isStandard = ['contact', 'opportunity', 'business'].includes(cleanKey);
+
+  // Different headers for standard vs custom objects
+  // Standard objects don't support folder organization
+  const headers = isStandard
+    ? ['name', 'data_type', 'description', 'placeholder', 'show_in_forms', 'options', 'accepted_formats', 'max_file_limit', 'allow_custom_option']
+    : ['name', 'data_type', 'description', 'placeholder', 'show_in_forms', 'options', 'accepted_formats', 'max_file_limit', 'allow_custom_option', 'existing_folder_id'];
+
+  const examples = isStandard ? [
+    ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', ''],
+    ['Price', 'MONETORY', 'Product price in USD', '99.99', 'true', '', '', '', ''],
+    ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', ''],
+    ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', ''],
+    ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', ''],
+    ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', ''],
+    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', 'Yes|No', '', '', ''],
+    ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', ''],
+    ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png', '5', ''],
+    ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', ''],
+    ['Support Phone', 'PHONE', 'Customer support number', '(555) 123-4567', 'false', '', '', '', '']
+  ] : [
+    ['Product Name', 'TEXT', 'Enter the product name', 'e.g., Widget Pro 2000', 'true', '', '', '', '', ''],
+    ['Price', 'MONETORY', 'Product price in USD', '99.99', 'true', '', '', '', '', ''],
+    ['Category', 'SINGLE_OPTIONS', 'Product category', '', 'true', 'Electronics|Clothing|Home & Garden|Sports', '', '', '', ''],
+    ['Tags', 'MULTIPLE_OPTIONS', 'Select all that apply', '', 'true', 'New|Featured|Sale|Limited Edition', '', '', '', ''],
+    ['Description', 'LARGE_TEXT', 'Detailed product description', 'Enter product details...', 'true', '', '', '', '', ''],
+    ['SKU', 'TEXT', 'Stock keeping unit', 'ABC-123', 'true', '', '', '', '', ''],
+    ['In Stock', 'CHECKBOX', 'Is this product currently in stock?', '', 'true', 'Yes|No', '', '', '', ''],
+    ['Launch Date', 'DATE', 'Product launch date', '', 'false', '', '', '', '', ''],
+    ['Product Image', 'FILE_UPLOAD', 'Upload product images', '', 'true', '', '.jpg,.png', '5', '', ''],
+    ['Contact Email', 'EMAIL', 'Supplier contact email', 'supplier@example.com', 'false', '', '', '', '', ''],
+    ['Support Phone', 'PHONE', 'Customer support number', '(555) 123-4567', 'false', '', '', '', '', '']
   ];
 
   const csvContent = [

@@ -565,8 +565,13 @@ router.post('/objects/:objectKey/fields/import', requireAuth, upload.single('fie
           textBoxListOptions: row.textbox_list_options
         };
 
+        // Determine folder ID - use CSV value if provided for custom objects, otherwise default
+        const folderId = !isStandard
+          ? (row.existing_folder_id || row.folder_id || row.parent_id || defaultFolderId)
+          : null;
+
         // Format payload based on object type
-        const fieldPayload = formatFieldPayload(cleanKey, fieldData, locationId, defaultFolderId);
+        const fieldPayload = formatFieldPayload(cleanKey, fieldData, locationId, folderId);
 
         // Get the correct endpoint
         const endpoint = getFieldCreateEndpoint(cleanKey, locationId);
