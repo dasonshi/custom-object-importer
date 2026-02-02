@@ -60,6 +60,61 @@
 - AUTH FAILURES: 401s excluding Safari (Safari cookie issues are expected)
 - Note: "Bad Request" errors are GHL API validation errors, not app bugs
 
+### Axiom API (for monitors/notifiers)
+
+The CLI doesn't support monitors or notifiers. Use the REST API instead.
+
+**Auth credentials** (from `~/.axiom.toml`):
+```
+Token: xapt-ed795584-adec-4ab9-bb00-ef5b78d2f308
+Org ID: savvy-sales-k2ob
+```
+
+**Headers required for all API calls:**
+```bash
+-H "Authorization: Bearer <token>"
+-H "X-Axiom-Org-Id: savvy-sales-k2ob"
+-H "Content-Type: application/json"
+```
+
+**Existing resources:**
+- Notifier `oCCzANvP6FvANXUVU7` → david@savvysales.ai
+- Monitor `l0IwKumEQRWxeUfTgL` → "New App Install" (emails on OAuth success)
+
+**API examples:**
+```bash
+# List notifiers
+curl -s "https://api.axiom.co/v2/notifiers" \
+  -H "Authorization: Bearer xapt-ed795584-adec-4ab9-bb00-ef5b78d2f308" \
+  -H "X-Axiom-Org-Id: savvy-sales-k2ob"
+
+# List monitors
+curl -s "https://api.axiom.co/v2/monitors" \
+  -H "Authorization: Bearer xapt-ed795584-adec-4ab9-bb00-ef5b78d2f308" \
+  -H "X-Axiom-Org-Id: savvy-sales-k2ob"
+
+# Create email notifier
+curl -s -X POST "https://api.axiom.co/v2/notifiers" \
+  -H "Authorization: Bearer xapt-ed795584-adec-4ab9-bb00-ef5b78d2f308" \
+  -H "X-Axiom-Org-Id: savvy-sales-k2ob" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alert Name", "properties": {"email": {"emails": ["user@example.com"]}}}'
+
+# Create monitor (MatchEvent type for instant alerts)
+curl -s -X POST "https://api.axiom.co/v2/monitors" \
+  -H "Authorization: Bearer xapt-ed795584-adec-4ab9-bb00-ef5b78d2f308" \
+  -H "X-Axiom-Org-Id: savvy-sales-k2ob" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Monitor Name",
+    "type": "MatchEvent",
+    "aplQuery": "[\"custom-object-importer\"] | where hostname == \"importer.api.savvysales.ai\" | where <your filter>",
+    "notifierIds": ["<notifier-id>"],
+    "intervalMinutes": 5,
+    "rangeMinutes": 5
+  }'
+```
+
 ---
 
 ## User Tracking
