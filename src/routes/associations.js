@@ -36,18 +36,29 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
 
     const associations = response.data?.associations || response.data || [];
 
+    // Helper to get clean object name from key (e.g., "custom_objects.car" -> "Car")
+    const getObjectName = (key) => {
+      if (!key) return 'Unknown';
+      const cleanKey = key.replace(/^custom_objects\./, '');
+      return cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1);
+    };
+
     res.json({
       associations: [
         CONTACT_BUSINESS_ASSOCIATION,  // Always include Contact-Business first
-        ...associations.map(assoc => ({
-          id: assoc.id,
-          key: assoc.key,
-          firstObjectKey: assoc.firstObjectKey,
-          firstObjectLabel: assoc.firstObjectLabel,
-          secondObjectKey: assoc.secondObjectKey,
-          secondObjectLabel: assoc.secondObjectLabel,
-          description: `${assoc.firstObjectLabel} → ${assoc.secondObjectLabel}`
-        }))
+        ...associations.map(assoc => {
+          const firstName = getObjectName(assoc.firstObjectKey);
+          const secondName = getObjectName(assoc.secondObjectKey);
+          return {
+            id: assoc.id,
+            key: assoc.key,
+            firstObjectKey: assoc.firstObjectKey,
+            firstObjectLabel: firstName,
+            secondObjectKey: assoc.secondObjectKey,
+            secondObjectLabel: secondName,
+            description: `${firstName} → ${secondName}`
+          };
+        })
       ]
     });
   } catch (e) {
