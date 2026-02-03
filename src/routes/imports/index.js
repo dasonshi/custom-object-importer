@@ -903,6 +903,194 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
   }
 });
 
+// Bulk delete records
+router.post('/objects/:objectKey/records/delete', requireAuth, validateTenant, upload.single('records'), async (req, res) => {
+  const locationId = req.locationId;
+  const { objectKey } = req.params;
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'Records CSV file with IDs is required' });
+  }
+
+  try {
+    const token = await withAccessToken(locationId);
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Version: '2021-07-28'
+    };
+
+    // Ensure proper object key format
+    const fullObjectKey = objectKey.startsWith('custom_objects.')
+      ? objectKey
+      : `custom_objects.${objectKey}`;
+
+    const records = await parseCSV(req.file.path);
+
+    if (records.length === 0) {
+      await cleanupTempFiles([req.file.path]);
+      return res.status(400).json({ error: 'CSV file is empty or has no valid records' });
+    }
+
+    // Find the ID column - look for common variations
+    const firstRow = records[0];
+    const idColumnCandidates = ['id', 'record_id', 'recordid', 'record id', '_id'];
+    let idColumn = null;
+
+    for (const candidate of idColumnCandidates) {
+      if (firstRow.hasOwnProperty(candidate)) {
+        idColumn = candidate;
+        break;
+      }
+    }
+
+    // If no standard ID column found, check if there's only one column
+    const columns = Object.keys(firstRow);
+    if (!idColumn && columns.length === 1) {
+      idColumn = columns[0];
+    }
+
+    if (!idColumn) {
+      await cleanupTempFiles([req.file.path]);
+      return res.status(400).json({
+        error: 'Could not find ID column in CSV',
+        message: 'CSV must have a column named "id", "record_id", or similar. Found columns: ' + columns.join(', ')
+      });
+    }
+
+    console.log(`[RecordsDelete] Starting deletion of ${records.length} records from ${fullObjectKey} using column "${idColumn}"`);
+
+    // Use adaptive rate controller
+    const controller = new AdaptiveRateController(records.length);
+    const batchSize = controller.getBatchSize();
+    const totalBatches = Math.ceil(records.length / batchSize);
+
+    // Process delete for a single record
+    const processDelete = async (row, rowIndex) => {
+      const recordId = String(row[idColumn] || '').trim();
+
+      if (!recordId) {
+        return {
+          success: false,
+          error: {
+            recordIndex: rowIndex + 2, // +2 for header row and 0-indexing
+            id: null,
+            error: 'Missing or empty record ID',
+            errorCode: 'MISSING_ID'
+          }
+        };
+      }
+
+      try {
+        await retryWithBackoff(() => axios.delete(
+          `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
+          {
+            headers,
+            params: { locationId }
+          }
+        ));
+
+        controller.recordSuccess();
+        await controller.applyDelay();
+
+        return {
+          success: true,
+          data: {
+            id: recordId,
+            action: 'deleted',
+            rowIndex: rowIndex + 2
+          }
+        };
+      } catch (e) {
+        const status = e?.response?.status;
+        const apiError = e?.response?.data;
+
+        if (status === 429) {
+          controller.record429();
+        }
+
+        // Treat 404 as "not found" rather than error
+        if (status === 404) {
+          return {
+            success: false,
+            notFound: true,
+            data: {
+              id: recordId,
+              rowIndex: rowIndex + 2,
+              reason: 'Record not found'
+            }
+          };
+        }
+
+        return {
+          success: false,
+          error: {
+            recordIndex: rowIndex + 2,
+            id: recordId,
+            error: apiError?.message || e.message,
+            errorCode: apiError?.error || 'DELETE_FAILED',
+            statusCode: status
+          }
+        };
+      }
+    };
+
+    // Process in batches
+    const allResults = [];
+
+    for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+      const batchStart = batchNum * batchSize;
+      const batch = records.slice(batchStart, batchStart + batchSize);
+
+      console.log(`[RecordsDelete] Processing batch ${batchNum + 1}/${totalBatches} (${batch.length} records)`);
+
+      const limit = pLimit(controller.getConcurrency());
+      const batchResults = await Promise.all(
+        batch.map((row, idx) => limit(async () => {
+          await controller.waitIfCircuitBroken();
+          return processDelete(row, batchStart + idx);
+        }))
+      );
+
+      allResults.push(...batchResults);
+
+      // Pause between batches (except for last batch)
+      if (batchNum < totalBatches - 1) {
+        await controller.applyBatchPause();
+      }
+    }
+
+    // Separate results
+    const deleted = allResults.filter(r => r.success).map(r => r.data);
+    const notFound = allResults.filter(r => r.notFound).map(r => r.data);
+    const errors = allResults.filter(r => !r.success && !r.notFound).map(r => r.error);
+
+    const stats = controller.getStats();
+    console.log(`[RecordsDelete] Complete. Deleted: ${deleted.length}, Not Found: ${notFound.length}, Errors: ${errors.length}`);
+
+    await cleanupTempFiles([req.file.path]);
+
+    res.json({
+      success: errors.length === 0,
+      message: `Deleted ${deleted.length} records from ${objectKey}`,
+      objectKey: fullObjectKey,
+      deleted,
+      notFound,
+      errors,
+      summary: {
+        total: records.length,
+        deleted: deleted.length,
+        notFound: notFound.length,
+        failed: errors.length
+      },
+      rateStats: stats
+    });
+
+  } catch (e) {
+    await cleanupTempFiles([req.file?.path].filter(Boolean));
+    handleAPIError(res, e, 'Records delete');
+  }
+});
+
 // Import association types
 router.post('/associations/types/import', requireAuth, upload.single('associations'), async (req, res) => {
   const locationId = req.locationId;
