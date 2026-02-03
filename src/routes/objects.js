@@ -9,6 +9,19 @@ import { handleAPIError } from '../utils/apiHelpers.js';
 import { isStandardObject, getFieldFetchEndpoint } from '../utils/objectHelpers.js';
 const router = Router();
 
+/**
+ * Safely normalize dataType to a string.
+ * Handles cases where GHL API returns dataType as an object {id, label} instead of a string.
+ */
+function normalizeDataType(dataType) {
+  if (typeof dataType === 'string') return dataType;
+  if (dataType && typeof dataType === 'object') {
+    if (typeof dataType.id === 'string') return dataType.id;
+    if (typeof dataType.label === 'string') return dataType.label;
+  }
+  return 'TEXT';
+}
+
 // List all objects (both standard and custom)
 router.get('/', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
@@ -151,9 +164,7 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
           id: field.id,
           name: field.name,
           fieldKey: field.fieldKey,
-          dataType: typeof field.dataType === 'object'
-            ? (field.dataType?.id || field.dataType?.label || 'TEXT')
-            : (field.dataType || 'TEXT'),
+          dataType: normalizeDataType(field.dataType),
           placeholder: field.placeholder,
           description: field.description,
           picklistOptions: field.options,
@@ -169,9 +180,7 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
           id: field.id,
           name: field.name,
           fieldKey: field.fieldKey,
-          dataType: typeof field.dataType === 'object'
-            ? (field.dataType?.id || field.dataType?.label || 'TEXT')
-            : (field.dataType || 'TEXT'),
+          dataType: normalizeDataType(field.dataType),
           placeholder: field.placeholder,
           position: field.position,
           model: field.model,
@@ -221,9 +230,7 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
       // Enhance fields with folder information and normalize dataType
       fields = fields.map(field => ({
         ...field,
-        dataType: typeof field.dataType === 'object'
-          ? (field.dataType?.id || field.dataType?.label || 'TEXT')
-          : (field.dataType || 'TEXT'),
+        dataType: normalizeDataType(field.dataType),
         folder: field.parentId ? folders[field.parentId] : null
       }));
     }
@@ -236,6 +243,21 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
     });
   } catch (e) {
     console.error(`Failed to fetch fields for object ${objectKey}:`, e?.response?.data || e.message);
+
+    // If GHL returns 400 Bad Request for business fields (known API limitation),
+    // return empty fields instead of erroring out
+    const cleanKey = objectKey.replace(/^custom_objects\./, '');
+    if (e?.response?.status === 400 && cleanKey === 'business') {
+      console.log('GHL API does not support business custom fields for this location, returning empty fields');
+      return res.json({
+        objectKey: cleanKey,
+        fields: [],
+        folders: [],
+        isStandardObject: true,
+        note: 'Business custom fields are not available via API for this location'
+      });
+    }
+
     res.status(500).json({ error: 'Failed to fetch fields', details: e?.response?.data || e.message });
   }
 });
