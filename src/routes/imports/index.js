@@ -1425,6 +1425,13 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
 
           await delay(200); // Rate limiting
         } catch (e) {
+          console.error(`[Relations Import] Contact-Business API error:`, JSON.stringify({
+            status: e?.response?.status,
+            data: e?.response?.data,
+            businessId,
+            contactIds: batch
+          }, null, 2));
+
           const msg = e?.response?.data?.message || e?.response?.data || e.message;
 
           // Check if already linked
