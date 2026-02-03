@@ -224,18 +224,17 @@ router.get('/relations/:associationId', requireAuth, async (req, res) => {
     const cleanFirstKey = firstObjectKey.replace(/[^a-z0-9]/gi, '_').toLowerCase();
     const cleanSecondKey = secondObjectKey.replace(/[^a-z0-9]/gi, '_').toLowerCase();
     
-    // Create dynamic headers using actual object keys
+    // Create dynamic headers using actual object keys (no association_id - passed via form field)
     const headers = [
-      'association_id',
       `${cleanFirstKey}_record_id`,
       `${cleanSecondKey}_record_id`
     ];
-    
-    // Create example rows with object key context
+
+    // Create example rows
     const examples = [
-      [associationId, `${cleanFirstKey}_rec_123`, `${cleanSecondKey}_rec_456`],
-      [associationId, `${cleanFirstKey}_rec_789`, `${cleanSecondKey}_rec_abc`],
-      [associationId, `${cleanFirstKey}_rec_def`, `${cleanSecondKey}_rec_ghi`]
+      [`${cleanFirstKey}_rec_123`, `${cleanSecondKey}_rec_456`],
+      [`${cleanFirstKey}_rec_789`, `${cleanSecondKey}_rec_abc`],
+      [`${cleanFirstKey}_rec_def`, `${cleanSecondKey}_rec_ghi`]
     ];
     
     const csvContent = [
@@ -255,10 +254,10 @@ router.get('/relations/:associationId', requireAuth, async (req, res) => {
     console.error(`Failed to generate relations template for ${associationId}:`, e?.response?.data || e.message);
     
     // Fallback to generic template if association fetch fails
-    const headers = ['association_id', 'first_record_id', 'second_record_id'];
+    const headers = ['first_record_id', 'second_record_id'];
     const examples = [
-      [associationId, 'record_123', 'record_456'],
-      [associationId, 'record_789', 'record_abc']
+      ['record_123', 'record_456'],
+      ['record_789', 'record_abc']
     ];
     
     const csvContent = [

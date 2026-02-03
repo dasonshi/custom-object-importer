@@ -1280,18 +1280,14 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
     const errors = [];
     const skipped = [];
 
-    // Cache for association details to avoid repeated API calls
-    const associationCache = {};
+    // Get association ID from form field (new method) or fall back to CSV column (legacy)
+    const formAssociationId = req.body?.associationId?.trim();
 
-    // Helper to get association details (with caching)
+    // Helper to get association details
     const getAssociationDetails = async (associationId) => {
-      if (associationCache[associationId]) {
-        return associationCache[associationId];
-      }
-
       // Handle hardcoded Contact-Business native association
       if (associationId === 'contact-business-native') {
-        const nativeAssoc = {
+        return {
           id: 'contact-business-native',
           key: 'contact-business',
           firstObjectKey: 'contact',
@@ -1300,8 +1296,6 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
           secondObjectLabel: 'Business',
           isNative: true
         };
-        associationCache[associationId] = nativeAssoc;
-        return nativeAssoc;
       }
 
       try {
@@ -1309,7 +1303,6 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
           `${API_BASE}/associations/${associationId}`,
           { headers, params: { locationId } }
         );
-        associationCache[associationId] = response.data;
         return response.data;
       } catch (e) {
         if (e?.response?.status === 404) {
@@ -1327,6 +1320,13 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
              (first === 'business' && second === 'contact');
     };
 
+    // Get association details ONCE if provided via form field
+    let association = null;
+    if (formAssociationId) {
+      association = await getAssociationDetails(formAssociationId);
+      console.log(`[Relations Import] Using form association: ${formAssociationId} (${association.firstObjectKey} → ${association.secondObjectKey})`);
+    }
+
     // First pass: separate Contact-Business links from regular relations
     const contactBusinessLinks = {}; // businessId -> [{contactId, rowIndex}]
     const regularRelations = []; // [{row, rowIndex, association}]
@@ -1334,16 +1334,29 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
     for (let rowIndex = 0; rowIndex < relations.length; rowIndex++) {
       const row = relations[rowIndex];
       try {
-        const associationId = String(row.association_id || '').trim();
+        // Use form association if provided, else read from CSV row (legacy)
+        let rowAssociation = association;
+        let associationId = formAssociationId;
 
-        // Parse record IDs (support old and dynamic formats)
+        if (!rowAssociation) {
+          // Legacy: read from CSV column
+          associationId = String(row.association_id || '').trim();
+          if (!associationId) {
+            throw new Error('Missing association_id. Please select an association before uploading.');
+          }
+          rowAssociation = await getAssociationDetails(associationId);
+        }
+
+        // Parse record IDs (support dynamic column names like contact_record_id, business_record_id)
         let firstRecordId = '';
         let secondRecordId = '';
 
+        // Try explicit columns first
         if (row.first_record_id && row.second_record_id) {
           firstRecordId = String(row.first_record_id).trim();
           secondRecordId = String(row.second_record_id).trim();
         } else {
+          // Find columns ending in _record_id (e.g., contact_record_id, business_record_id)
           const recordIdColumns = Object.keys(row).filter(key =>
             key.endsWith('_record_id') && key !== 'association_id'
           );
@@ -1354,19 +1367,16 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
           }
         }
 
-        if (!associationId || !firstRecordId || !secondRecordId) {
+        if (!firstRecordId || !secondRecordId) {
           const availableColumns = Object.keys(row).join(', ');
-          throw new Error(`Missing required fields. Expected: association_id and two record ID columns. Found columns: ${availableColumns}`);
+          throw new Error(`Missing record IDs. Expected two columns ending in _record_id. Found: ${availableColumns}`);
         }
 
-        // Get association details
-        const association = await getAssociationDetails(associationId);
-
-        if (isContactBusinessAssociation(association)) {
+        if (isContactBusinessAssociation(rowAssociation)) {
           // Determine which ID is contact and which is business
-          const contactId = association.firstObjectKey?.toLowerCase() === 'contact'
+          const contactId = rowAssociation.firstObjectKey?.toLowerCase() === 'contact'
             ? firstRecordId : secondRecordId;
-          const businessId = association.firstObjectKey?.toLowerCase() === 'business'
+          const businessId = rowAssociation.firstObjectKey?.toLowerCase() === 'business'
             ? firstRecordId : secondRecordId;
 
           if (!contactBusinessLinks[businessId]) {
