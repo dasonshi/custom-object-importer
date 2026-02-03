@@ -155,7 +155,8 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
         id: field.id,
         name: field.name,
         fieldKey: field.fieldKey,
-        dataType: field.dataType,
+        // Ensure dataType is always a string (GHL sometimes returns objects for certain field types)
+        dataType: typeof field.dataType === 'object' ? (field.dataType?.id || field.dataType?.label || 'TEXT') : (field.dataType || 'TEXT'),
         placeholder: field.placeholder,
         position: field.position,
         model: field.model,
