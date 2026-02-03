@@ -211,15 +211,25 @@ export function normalizeFieldResponse(response, isStandard) {
 export function getFieldFetchEndpoint(objectKey, locationId) {
   const cleanKey = objectKey.replace('custom_objects.', '');
 
-  if (isStandardObject(cleanKey)) {
+  // Business uses custom-fields/object-key endpoint (per GHL docs)
+  // Contact and Opportunity use locations/customFields endpoint
+  if (cleanKey === 'business') {
+    return {
+      url: `${API_BASE}/custom-fields/object-key/business`,
+      params: { locationId },
+      responseType: 'customObject'
+    };
+  } else if (isStandardObject(cleanKey)) {
     return {
       url: `${API_BASE}/locations/${locationId}/customFields`,
-      params: { model: cleanKey }
+      params: { model: cleanKey },
+      responseType: 'standard'
     };
   } else {
     return {
       url: `${API_BASE}/custom-fields/object-key/${encodeURIComponent(`custom_objects.${cleanKey}`)}`,
-      params: { locationId }
+      params: { locationId },
+      responseType: 'customObject'
     };
   }
 }

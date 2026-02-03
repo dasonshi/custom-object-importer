@@ -135,7 +135,7 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
     let folders = {};
 
     if (isStandard) {
-      // Fetch standard object fields using different endpoint
+      // Fetch standard object fields using appropriate endpoint
       const endpoint = getFieldFetchEndpoint(cleanKey, locationId);
       response = await axios.get(endpoint.url, {
         headers: {
@@ -145,27 +145,41 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
         params: endpoint.params
       });
 
-      // Standard object response structure
-      const customFields = response.data?.customFields || [];
-
-      // Filter to only custom fields for the specified model
-      fields = customFields.filter(field =>
-        field.model === cleanKey
-      ).map(field => ({
-        id: field.id,
-        name: field.name,
-        fieldKey: field.fieldKey,
-        // Ensure dataType is always a string (GHL sometimes returns objects for certain field types)
-        dataType: typeof field.dataType === 'object' ? (field.dataType?.id || field.dataType?.label || 'TEXT') : (field.dataType || 'TEXT'),
-        placeholder: field.placeholder,
-        position: field.position,
-        model: field.model,
-        picklistOptions: field.picklistOptions,
-        isStandard: true
-      }));
-
-      // No folders for standard objects
-      folders = {};
+      if (endpoint.responseType === 'customObject') {
+        // Business uses the same response format as custom objects
+        fields = (response.data?.fields || []).map(field => ({
+          id: field.id,
+          name: field.name,
+          fieldKey: field.fieldKey,
+          dataType: typeof field.dataType === 'object'
+            ? (field.dataType?.id || field.dataType?.label || 'TEXT')
+            : (field.dataType || 'TEXT'),
+          placeholder: field.placeholder,
+          description: field.description,
+          picklistOptions: field.options,
+          isStandard: true
+        }));
+        folders = response.data?.folders || [];
+      } else {
+        // Contact/Opportunity use customFields response format
+        const customFields = response.data?.customFields || [];
+        fields = customFields.filter(field =>
+          field.model === cleanKey
+        ).map(field => ({
+          id: field.id,
+          name: field.name,
+          fieldKey: field.fieldKey,
+          dataType: typeof field.dataType === 'object'
+            ? (field.dataType?.id || field.dataType?.label || 'TEXT')
+            : (field.dataType || 'TEXT'),
+          placeholder: field.placeholder,
+          position: field.position,
+          model: field.model,
+          picklistOptions: field.picklistOptions,
+          isStandard: true
+        }));
+        folders = {};
+      }
     } else {
       // Custom object - use existing logic
       const apiObjectKey = `custom_objects.${cleanKey}`;
