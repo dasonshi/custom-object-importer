@@ -34,7 +34,9 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
       params: { locationId, skip: 0, limit: 100 }
     });
 
+    console.log('[Associations] GHL response:', JSON.stringify(response.data, null, 2));
     const associations = response.data?.associations || response.data || [];
+    console.log(`[Associations] Found ${associations.length} custom associations`);
 
     res.json({
       associations: [

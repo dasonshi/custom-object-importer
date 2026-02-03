@@ -204,9 +204,12 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
         }
       }
 
-      // Enhance fields with folder information
+      // Enhance fields with folder information and normalize dataType
       fields = fields.map(field => ({
         ...field,
+        dataType: typeof field.dataType === 'object'
+          ? (field.dataType?.id || field.dataType?.label || 'TEXT')
+          : (field.dataType || 'TEXT'),
         folder: field.parentId ? folders[field.parentId] : null
       }));
     }
