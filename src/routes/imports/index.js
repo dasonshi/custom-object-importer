@@ -1288,6 +1288,22 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
       if (associationCache[associationId]) {
         return associationCache[associationId];
       }
+
+      // Handle hardcoded Contact-Business native association
+      if (associationId === 'contact-business-native') {
+        const nativeAssoc = {
+          id: 'contact-business-native',
+          key: 'contact-business',
+          firstObjectKey: 'contact',
+          firstObjectLabel: 'Contact',
+          secondObjectKey: 'business',
+          secondObjectLabel: 'Business',
+          isNative: true
+        };
+        associationCache[associationId] = nativeAssoc;
+        return nativeAssoc;
+      }
+
       try {
         const response = await axios.get(
           `${API_BASE}/associations/${associationId}`,

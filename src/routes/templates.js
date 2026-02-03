@@ -179,30 +179,41 @@ router.get('/relations', (req, res) => {
 router.get('/relations/:associationId', requireAuth, async (req, res) => {
   const locationId = req.locationId;
   const { associationId } = req.params;
-  
+
   try {
-    // Fetch ALL associations and find the specific one by ID
-    const token = await withAccessToken(locationId);
-    const associationsResponse = await axios.get(
-      `${API_BASE}/associations/`,
-      {
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          Version: '2021-07-28'
-        },
-        params: { locationId }
+    let association;
+
+    // Handle hardcoded Contact-Business native association
+    if (associationId === 'contact-business-native') {
+      association = {
+        id: 'contact-business-native',
+        firstObjectKey: 'contact',
+        secondObjectKey: 'business'
+      };
+    } else {
+      // Fetch ALL associations and find the specific one by ID
+      const token = await withAccessToken(locationId);
+      const associationsResponse = await axios.get(
+        `${API_BASE}/associations/`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Version: '2021-07-28'
+          },
+          params: { locationId }
+        }
+      );
+
+      // Find the specific association by ID
+      const associations = Array.isArray(associationsResponse.data)
+        ? associationsResponse.data
+        : associationsResponse.data?.associations || [];
+
+      association = associations.find(assoc => assoc.id === associationId);
+
+      if (!association) {
+        throw new Error(`Association with ID ${associationId} not found`);
       }
-    );
-    
-    // Find the specific association by ID
-    const associations = Array.isArray(associationsResponse.data) 
-      ? associationsResponse.data 
-      : associationsResponse.data?.associations || [];
-      
-    const association = associations.find(assoc => assoc.id === associationId);
-    
-    if (!association) {
-      throw new Error(`Association with ID ${associationId} not found`);
     }
     
     // Get clean object keys for column names  
