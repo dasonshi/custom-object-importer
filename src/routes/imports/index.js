@@ -1077,7 +1077,7 @@ router.post('/custom-values/import', requireAuth, upload.single('customValues'),
 router.post('/associations/relations/import', requireAuth, upload.single('relations'), async (req, res) => {
   const locationId = req.locationId;
   const token = await withAccessToken(locationId);
-  const headers = { 
+  const headers = {
     Authorization: `Bearer ${token}`,
     Version: '2021-07-28'
   };
@@ -1092,28 +1092,58 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
     const errors = [];
     const skipped = [];
 
+    // Cache for association details to avoid repeated API calls
+    const associationCache = {};
+
+    // Helper to get association details (with caching)
+    const getAssociationDetails = async (associationId) => {
+      if (associationCache[associationId]) {
+        return associationCache[associationId];
+      }
+      try {
+        const response = await axios.get(
+          `${API_BASE}/associations/${associationId}`,
+          { headers, params: { locationId } }
+        );
+        associationCache[associationId] = response.data;
+        return response.data;
+      } catch (e) {
+        if (e?.response?.status === 404) {
+          throw new Error(`Association ${associationId} not found`);
+        }
+        throw e;
+      }
+    };
+
+    // Helper to check if association is Contact-Business
+    const isContactBusinessAssociation = (association) => {
+      const first = association.firstObjectKey?.toLowerCase();
+      const second = association.secondObjectKey?.toLowerCase();
+      return (first === 'contact' && second === 'business') ||
+             (first === 'business' && second === 'contact');
+    };
+
+    // First pass: separate Contact-Business links from regular relations
+    const contactBusinessLinks = {}; // businessId -> [{contactId, rowIndex}]
+    const regularRelations = []; // [{row, rowIndex, association}]
+
     for (let rowIndex = 0; rowIndex < relations.length; rowIndex++) {
       const row = relations[rowIndex];
       try {
-        // Required fields
         const associationId = String(row.association_id || '').trim();
-        
-        // Support both old format (first_record_id, second_record_id) and new dynamic format
+
+        // Parse record IDs (support old and dynamic formats)
         let firstRecordId = '';
         let secondRecordId = '';
-        
-        // Try old format first
+
         if (row.first_record_id && row.second_record_id) {
           firstRecordId = String(row.first_record_id).trim();
           secondRecordId = String(row.second_record_id).trim();
         } else {
-          // Try to find dynamic column names ending with '_record_id'
-          const recordIdColumns = Object.keys(row).filter(key => 
+          const recordIdColumns = Object.keys(row).filter(key =>
             key.endsWith('_record_id') && key !== 'association_id'
           );
-          
           if (recordIdColumns.length >= 2) {
-            // Sort to ensure consistent order (alphabetical)
             recordIdColumns.sort();
             firstRecordId = String(row[recordIdColumns[0]] || '').trim();
             secondRecordId = String(row[recordIdColumns[1]] || '').trim();
@@ -1125,27 +1155,95 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
           throw new Error(`Missing required fields. Expected: association_id and two record ID columns. Found columns: ${availableColumns}`);
         }
 
-        // Optional: validate that the association exists first
-        try {
-          await axios.get(
-            `${API_BASE}/associations/${associationId}`,
-            { 
-              headers,
-              params: { locationId }
-            }
-          );
-        } catch (e) {
-          if (e?.response?.status === 404) {
-            throw new Error(`Association ${associationId} not found`);
+        // Get association details
+        const association = await getAssociationDetails(associationId);
+
+        if (isContactBusinessAssociation(association)) {
+          // Determine which ID is contact and which is business
+          const contactId = association.firstObjectKey?.toLowerCase() === 'contact'
+            ? firstRecordId : secondRecordId;
+          const businessId = association.firstObjectKey?.toLowerCase() === 'business'
+            ? firstRecordId : secondRecordId;
+
+          if (!contactBusinessLinks[businessId]) {
+            contactBusinessLinks[businessId] = [];
           }
+          contactBusinessLinks[businessId].push({ contactId, rowIndex });
+        } else {
+          regularRelations.push({ row, rowIndex, associationId, firstRecordId, secondRecordId });
         }
 
-        // Create the relation
+      } catch (e) {
+        const msg = e?.response?.data?.message || e?.response?.data || e.message;
+        errors.push({
+          recordIndex: rowIndex,
+          name: `Row ${rowIndex + 1}`,
+          error: typeof msg === 'string' ? msg : JSON.stringify(msg),
+          errorCode: 'ValidationError'
+        });
+      }
+    }
+
+    // Process Contact-Business links in batches (max 50 per API call)
+    console.log(`[Relations Import] Processing ${Object.keys(contactBusinessLinks).length} businesses with contact links`);
+    for (const [businessId, contacts] of Object.entries(contactBusinessLinks)) {
+      const contactIds = contacts.map(c => c.contactId);
+
+      // Batch in groups of 50
+      for (let i = 0; i < contactIds.length; i += 50) {
+        const batch = contactIds.slice(i, i + 50);
+        try {
+          await axios.post(
+            `${API_BASE}/contacts/bulk/business`,
+            { locationId, ids: batch, businessId },
+            { headers }
+          );
+
+          // Mark all contacts in this batch as created
+          batch.forEach(contactId => {
+            created.push({
+              type: 'contact-business',
+              contactId,
+              businessId,
+              description: `Contact ${contactId} → Business ${businessId}`
+            });
+          });
+
+          await delay(200); // Rate limiting
+        } catch (e) {
+          const msg = e?.response?.data?.message || e?.response?.data || e.message;
+
+          // Check if already linked
+          if (/(exist|already)/i.test(String(msg))) {
+            batch.forEach(contactId => {
+              skipped.push({ contactId, businessId, reason: 'Already linked' });
+            });
+          } else {
+            // Find the row indices for error reporting
+            const rowIndices = contacts
+              .filter(c => batch.includes(c.contactId))
+              .map(c => c.rowIndex);
+            errors.push({
+              recordIndex: rowIndices[0],
+              name: `Business ${businessId} (${batch.length} contacts)`,
+              error: typeof msg === 'string' ? msg : JSON.stringify(msg),
+              errorCode: e?.response?.data?.error || 'Error',
+              statusCode: e?.response?.status
+            });
+          }
+        }
+      }
+    }
+
+    // Process regular Custom Object relations
+    console.log(`[Relations Import] Processing ${regularRelations.length} regular relations`);
+    for (const { row, rowIndex, associationId, firstRecordId, secondRecordId } of regularRelations) {
+      try {
         const payload = {
-          locationId: locationId,
-          associationId: associationId,
-          firstRecordId: firstRecordId,
-          secondRecordId: secondRecordId
+          locationId,
+          associationId,
+          firstRecordId,
+          secondRecordId
         };
 
         const result = await axios.post(
@@ -1156,31 +1254,32 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
 
         created.push({
           id: result.data?.id || result.data?.data?.id,
+          type: 'custom-object',
           associationId,
           firstRecordId,
           secondRecordId,
           description: `${firstRecordId} ↔ ${secondRecordId}`
         });
 
+        await delay(200); // Rate limiting
+
       } catch (e) {
         const msg = e?.response?.data?.message || e?.response?.data || e.message;
-        
-        // Check if relation already exists
+
         if (/(exist|duplicate)/i.test(String(msg))) {
-          skipped.push({ 
-            associationId: row.association_id,
-            firstRecordId: row.first_record_id,
-            secondRecordId: row.second_record_id,
+          skipped.push({
+            associationId,
+            firstRecordId,
+            secondRecordId,
             reason: 'Relation already exists'
           });
         } else {
-          const apiError = e?.response?.data;
           errors.push({
             recordIndex: rowIndex,
-            name: `${row.first_record_id || 'unknown'} ↔ ${row.second_record_id || 'unknown'}`,
+            name: `${firstRecordId} ↔ ${secondRecordId}`,
             error: typeof msg === 'string' ? msg : JSON.stringify(msg),
-            errorCode: apiError?.error || 'Error',
-            statusCode: apiError?.statusCode || e?.response?.status
+            errorCode: e?.response?.data?.error || 'Error',
+            statusCode: e?.response?.status
           });
           console.error(`Relation create error (row ${rowIndex + 1}):`, msg);
         }
@@ -1199,7 +1298,10 @@ router.post('/associations/relations/import', requireAuth, upload.single('relati
         total: relations.length,
         created: created.length,
         skipped: skipped.length,
-        failed: errors.length
+        failed: errors.length,
+        contactBusinessLinks: Object.keys(contactBusinessLinks).length > 0
+          ? Object.values(contactBusinessLinks).reduce((sum, arr) => sum + arr.length, 0)
+          : 0
       }
     });
 
