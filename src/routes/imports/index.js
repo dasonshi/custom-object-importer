@@ -749,19 +749,13 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
             // First verify the record exists (with retry for rate limits)
             await retryWithBackoff(() => axios.get(
               `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-              {
-                headers,
-                params: { locationId }
-              }
+              { headers }
             ));
             // Record exists, update it (with retry for rate limits)
             recordResult = await retryWithBackoff(() => axios.put(
               `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
               updateRequestBody,
-              {
-                headers,
-                params: { locationId }
-              }
+              { headers }
             ));
             action = 'updated';
           } catch (getError) {
