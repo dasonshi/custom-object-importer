@@ -8,6 +8,7 @@ export async function parseCSV(filePath) {
     const result = Papa.parse(content, {
       header: true,
       skipEmptyLines: true,
+      delimiter: ',',  // Explicit - auto-detect fails on single-column CSVs
       trim: true,
       dynamicTyping: false,
       transformHeader: (header) => String(header || '').trim().toLowerCase().replace(/\s+/g, '_'),
