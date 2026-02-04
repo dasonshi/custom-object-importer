@@ -13,7 +13,32 @@
 - **Deployed via:** Lovable (not auto-deployed from git push)
 - **Tech stack:** React + TypeScript + Vite + shadcn/ui
 
-**Where users upload CSVs:** Frontend `ImportRecordsTab.tsx` and `AddFieldsTab.tsx` components handle file uploads using PapaParse for client-side CSV parsing, then POST to this backend's `/api/imports/*` endpoints.
+**Where users upload CSVs:** Frontend `ImportRecordsTab.tsx` and `AddFieldsTab.tsx` components handle file uploads using PapaParse for client-side CSV parsing, then POST to this backend's `/api/*` endpoints.
+
+---
+
+## Debugging Checklist
+
+### API 404 Errors
+When debugging a 404, ALWAYS check BOTH:
+1. **Route definition** in the handler file (e.g., `router.post('/objects/:key/records/delete', ...)`)
+2. **Router mount point** in `server.js` (e.g., `app.use('/api', importRoutes)`)
+
+The full URL = mount point + route path. Don't assume based on file location.
+
+```bash
+# Quick check: how is a router mounted?
+grep -n "importRoutes\|objectRoutes" server.js
+```
+
+### Express Route Gotchas
+- Dots (`.`) in path params don't match by default - `custom_objects.product` breaks `:objectKey`
+- Always strip prefixes like `custom_objects.` before putting in URL paths
+
+### React "Objects are not valid as React child" (Error #31)
+- Usually a type mismatch - component expects `string` but receives `{id, label}` object
+- Check component props interface vs what's being passed
+- Common with step indicators, lists, or any component rendering dynamic content
 
 ---
 
