@@ -983,10 +983,7 @@ router.post('/objects/:objectKey/records/delete', requireAuth, validateTenant, u
       try {
         await retryWithBackoff(() => axios.delete(
           `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-          {
-            headers,
-            params: { locationId }
-          }
+          { headers }
         ));
 
         controller.recordSuccess();
