@@ -7,18 +7,26 @@ import { handleAPIError } from '../utils/apiHelpers.js';
 
 const router = Router();
 
-// Hardcoded Contact-Business association (native GHL relationship)
-// GHL Associations API only returns Custom Objects associations (USER_DEFINED),
-// not native relationships like Contact-Business
-const CONTACT_BUSINESS_ASSOCIATION = {
-  id: 'contact-business-native',
-  key: 'contact-business',
-  firstObjectKey: 'contact',
-  firstObjectLabel: 'Contact',
-  secondObjectKey: 'business',
-  secondObjectLabel: 'Business',
-  description: 'Contact → Business (Native)',
-  isNative: true
+// Helper to get clean object name from key (e.g., "custom_objects.car" -> "Car")
+const getObjectName = (key) => {
+  if (!key) return 'Unknown';
+  const cleanKey = key.replace(/^custom_objects\./, '');
+  // Handle special cases
+  if (cleanKey === 'contact') return 'Contact';
+  if (cleanKey === 'business') return 'Business';
+  if (cleanKey === 'opportunity') return 'Opportunity';
+  // Capitalize first letter for custom objects
+  return cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1);
+};
+
+// Helper to format association key into readable name
+const formatAssociationKey = (key) => {
+  if (!key) return '';
+  // Convert snake_case or SCREAMING_SNAKE to Title Case
+  return key
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
 };
 
 router.get('/', requireAuth, validateTenant, async (req, res) => {
@@ -36,46 +44,39 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
 
     const associations = response.data?.associations || response.data || [];
 
-    // Helper to get clean object name from key (e.g., "custom_objects.car" -> "Car")
-    const getObjectName = (key) => {
-      if (!key) return 'Unknown';
-      const cleanKey = key.replace(/^custom_objects\./, '');
-      return cleanKey.charAt(0).toUpperCase() + cleanKey.slice(1);
-    };
-
-    // Log raw response to understand structure
-    console.log('Raw GHL associations response:', JSON.stringify(associations.slice(0, 3), null, 2));
-
     res.json({
-      associations: [
-        CONTACT_BUSINESS_ASSOCIATION,  // Always include Contact-Business first
-        ...associations.map(assoc => {
-          // Use GHL's labels if available, otherwise derive from object keys
-          const firstName = assoc.firstObjectLabel || getObjectName(assoc.firstObjectKey);
-          const secondName = assoc.secondObjectLabel || getObjectName(assoc.secondObjectKey);
-          // For description, show both the label AND the object type if they differ
-          const firstObjName = getObjectName(assoc.firstObjectKey);
-          const secondObjName = getObjectName(assoc.secondObjectKey);
-          const description = (firstName !== firstObjName || secondName !== secondObjName)
-            ? `${firstName} (${firstObjName}) → ${secondName} (${secondObjName})`
-            : `${firstName} → ${secondName}`;
+      associations: associations.map(assoc => {
+        const firstObjName = getObjectName(assoc.firstObjectKey);
+        const secondObjName = getObjectName(assoc.secondObjectKey);
 
-          return {
-            id: assoc.id,
-            key: assoc.key,
-            firstObjectKey: assoc.firstObjectKey,
-            firstObjectLabel: firstName,
-            secondObjectKey: assoc.secondObjectKey,
-            secondObjectLabel: secondName,
-            description
-          };
-        })
-      ]
+        // Build description based on association type
+        let description;
+        if (assoc.associationType === 'SYSTEM_DEFINED') {
+          // For system associations, just show clean object names
+          description = `${firstObjName} → ${secondObjName}`;
+        } else {
+          // For user-defined, include the relationship name if meaningful
+          const relationName = formatAssociationKey(assoc.key);
+          description = relationName
+            ? `${relationName}: ${firstObjName} → ${secondObjName}`
+            : `${firstObjName} → ${secondObjName}`;
+        }
+
+        return {
+          id: assoc.id,
+          key: assoc.key,
+          firstObjectKey: assoc.firstObjectKey,
+          firstObjectLabel: firstObjName,
+          secondObjectKey: assoc.secondObjectKey,
+          secondObjectLabel: secondObjName,
+          associationType: assoc.associationType,
+          description
+        };
+      })
     });
   } catch (e) {
     if (e?.response?.status === 404) {
-      // Even on error, return the Contact-Business option
-      res.json({ associations: [CONTACT_BUSINESS_ASSOCIATION] });
+      res.json({ associations: [] });
     } else {
       handleAPIError(res, e, 'Fetch associations');
     }
