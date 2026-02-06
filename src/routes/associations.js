@@ -49,18 +49,10 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
         const firstObjName = getObjectName(assoc.firstObjectKey);
         const secondObjName = getObjectName(assoc.secondObjectKey);
 
-        // Build description based on association type
-        let description;
-        if (assoc.associationType === 'SYSTEM_DEFINED') {
-          // For system associations, just show clean object names
-          description = `${firstObjName} → ${secondObjName}`;
-        } else {
-          // For user-defined, include the relationship name if meaningful
-          const relationName = formatAssociationKey(assoc.key);
-          description = relationName
-            ? `${relationName}: ${firstObjName} → ${secondObjName}`
-            : `${firstObjName} → ${secondObjName}`;
-        }
+        // Relationship name: formatted key for custom, "System" for native
+        const relationshipName = assoc.associationType === 'SYSTEM_DEFINED'
+          ? 'System'
+          : formatAssociationKey(assoc.key);
 
         return {
           id: assoc.id,
@@ -70,7 +62,7 @@ router.get('/', requireAuth, validateTenant, async (req, res) => {
           secondObjectKey: assoc.secondObjectKey,
           secondObjectLabel: secondObjName,
           associationType: assoc.associationType,
-          description
+          relationshipName
         };
       })
     });
