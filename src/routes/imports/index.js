@@ -700,6 +700,11 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           // Use the actual field type from schema
           const fieldType = fieldTypeMap[k];
 
+          // DEBUG: Log field type detection for phone-like values
+          if (v && String(v).includes('+')) {
+            console.log(`[DEBUG] Field "${k}": dataType="${fieldType}", rawValue="${v}", charCodes=[${[...String(v)].map(c => c.charCodeAt(0)).join(',')}]`);
+          }
+
           if (fieldType === 'MONETORY') {
             properties[k] = {
               currency: "default",
@@ -719,6 +724,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
             // Strip ALL quotes (handles embedded quotes like ""+15551234567"")
             let phone = String(v).trim().replace(/["']/g, '');
             const phoneResult = formatPhoneNumber(phone);
+            console.log(`[DEBUG] PHONE branch: before="${v}", after="${phone}", formatted="${phoneResult.formatted}"`);
             properties[k] = phoneResult.formatted;
             if (phoneResult.warning) {
               if (!row._phoneWarnings) row._phoneWarnings = [];
