@@ -749,6 +749,15 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         const updateRequestBody = {
           properties: properties
         };
+
+        // DEBUG: Log exact request body being sent to GHL (for phone quote investigation)
+        const hasPhoneField = Object.entries(properties).some(([k, v]) =>
+          typeof v === 'string' && (v.includes('+') || /^\d{10,}$/.test(v))
+        );
+        if (hasPhoneField) {
+          console.log(`[DEBUG] Request body for GHL (row ${rowIndex + 1}):`, JSON.stringify(createRequestBody, null, 2));
+        }
+
         let recordResult;
         let action = 'created';
         if (recordId) {
@@ -812,6 +821,11 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         // Report 429s to controller for adaptive rate limiting
         if (statusCode === 429) {
           controller.record429();
+        }
+
+        // DEBUG: Log raw GHL error response for phone quote investigation
+        if (apiError?.message && apiError.message.includes('phone')) {
+          console.log(`[DEBUG] Raw GHL error response (row ${rowIndex + 1}):`, JSON.stringify(e?.response?.data, null, 2));
         }
 
         console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message);
