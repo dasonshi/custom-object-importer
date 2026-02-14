@@ -19,6 +19,17 @@ import {
 } from '../../utils/objectHelpers.js';
 import { AdaptiveRateController } from '../../utils/adaptiveRateController.js';
 
+// DEBUG: HTTP-level request interceptor to log exact data being sent to GHL
+axios.interceptors.request.use((config) => {
+  if (config.url?.includes('/objects/') && config.url?.includes('/records')) {
+    const bodyStr = typeof config.data === 'string'
+      ? config.data
+      : JSON.stringify(config.data);
+    console.log('[DEBUG] Axios HTTP body:', bodyStr.substring(0, 500));
+  }
+  return config;
+});
+
 const router = Router();
 const upload = multer({ dest: '/tmp' });
 
