@@ -716,7 +716,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           } else if (fieldType === 'PHONE') {
             // Smart phone number formatting with warning tracking
             const { formatPhoneNumber } = await import('../../utils/phoneFormatter.js');
-            let phone = String(v).trim().replace(/^["']|["']$/g, '');
+            // Strip ALL quotes (handles embedded quotes like ""+15551234567"")
+            let phone = String(v).trim().replace(/["']/g, '');
             const phoneResult = formatPhoneNumber(phone);
             properties[k] = phoneResult.formatted;
             if (phoneResult.warning) {

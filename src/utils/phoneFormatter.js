@@ -14,7 +14,8 @@ export function formatPhoneNumber(input) {
     return { formatted: input, original: input, wasModified: false, warning: null };
   }
 
-  const original = input.trim();
+  // Strip quotes first (defense in depth for CSV embedded quotes)
+  const original = input.trim().replace(/["']/g, '');
 
   // Remove all non-digit characters except leading +
   let digits = original.replace(/[^\d+]/g, '');
