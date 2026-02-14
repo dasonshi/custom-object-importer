@@ -19,17 +19,6 @@ import {
 } from '../../utils/objectHelpers.js';
 import { AdaptiveRateController } from '../../utils/adaptiveRateController.js';
 
-// DEBUG: HTTP-level request interceptor to log exact data being sent to GHL
-axios.interceptors.request.use((config) => {
-  if (config.url?.includes('/objects/') && config.url?.includes('/records')) {
-    const bodyStr = typeof config.data === 'string'
-      ? config.data
-      : JSON.stringify(config.data);
-    console.log('[DEBUG] Axios HTTP body:', bodyStr.substring(0, 500));
-  }
-  return config;
-});
-
 const router = Router();
 const upload = multer({ dest: '/tmp' });
 
@@ -711,11 +700,6 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           // Use the actual field type from schema
           const fieldType = fieldTypeMap[k];
 
-          // DEBUG: Log field type detection for phone-like values
-          if (v && String(v).includes('+')) {
-            console.log(`[DEBUG] Field "${k}": dataType="${fieldType}", rawValue="${v}", charCodes=[${[...String(v)].map(c => c.charCodeAt(0)).join(',')}]`);
-          }
-
           if (fieldType === 'MONETORY') {
             properties[k] = {
               currency: "default",
@@ -732,10 +716,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           } else if (fieldType === 'PHONE') {
             // Smart phone number formatting with warning tracking
             const { formatPhoneNumber } = await import('../../utils/phoneFormatter.js');
-            // Strip ALL quotes (handles embedded quotes like ""+15551234567"")
             let phone = String(v).trim().replace(/["']/g, '');
             const phoneResult = formatPhoneNumber(phone);
-            console.log(`[DEBUG] PHONE branch: before="${v}", after="${phone}", formatted="${phoneResult.formatted}"`);
             properties[k] = phoneResult.formatted;
             if (phoneResult.warning) {
               if (!row._phoneWarnings) row._phoneWarnings = [];
@@ -760,14 +742,6 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         const updateRequestBody = {
           properties: properties
         };
-
-        // DEBUG: Log exact request body being sent to GHL (for phone quote investigation)
-        const hasPhoneField = Object.entries(properties).some(([k, v]) =>
-          typeof v === 'string' && (v.includes('+') || /^\d{10,}$/.test(v))
-        );
-        if (hasPhoneField) {
-          console.log(`[DEBUG] Request body for GHL (row ${rowIndex + 1}):`, JSON.stringify(createRequestBody, null, 2));
-        }
 
         let recordResult;
         let action = 'created';
@@ -832,11 +806,6 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         // Report 429s to controller for adaptive rate limiting
         if (statusCode === 429) {
           controller.record429();
-        }
-
-        // DEBUG: Log raw GHL error response for phone quote investigation
-        if (apiError?.message && apiError.message.includes('phone')) {
-          console.log(`[DEBUG] Raw GHL error response (row ${rowIndex + 1}):`, JSON.stringify(e?.response?.data, null, 2));
         }
 
         console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message);
