@@ -22,6 +22,20 @@ function normalizeDataType(dataType) {
   return 'TEXT';
 }
 
+// Retry a function once on transient GHL API errors (5xx)
+async function retryOnce(fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e?.response?.status >= 500 && e?.response?.status < 600) {
+      console.log(`GHL API returned ${e.response.status}, retrying once after 1s...`);
+      await new Promise(r => setTimeout(r, 1000));
+      return await fn();
+    }
+    throw e;
+  }
+}
+
 // List all objects (both standard and custom)
 router.get('/', requireAuth, validateTenant, async (req, res) => {
   const locationId = req.locationId;
@@ -150,13 +164,13 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
     if (isStandard) {
       // Fetch standard object fields using appropriate endpoint
       const endpoint = getFieldFetchEndpoint(cleanKey, locationId);
-      response = await axios.get(endpoint.url, {
+      response = await retryOnce(() => axios.get(endpoint.url, {
         headers: {
           Authorization: `Bearer ${token}`,
           Version: '2021-07-28'
         },
         params: endpoint.params
-      });
+      }));
 
       if (endpoint.responseType === 'customObject') {
         // Business uses the same response format as custom objects
@@ -192,13 +206,13 @@ router.get('/:objectKey/fields', requireAuth, validateTenant, async (req, res) =
     } else {
       // Custom object - use existing logic
       const apiObjectKey = `custom_objects.${cleanKey}`;
-      response = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
+      response = await retryOnce(() => axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
         headers: {
           Authorization: `Bearer ${token}`,
           Version: '2021-07-28'
         },
         params: { locationId }
-      });
+      }));
 
       fields = response.data?.fields || [];
       const parentIds = [...new Set(fields.map(f => f.parentId).filter(Boolean))];
