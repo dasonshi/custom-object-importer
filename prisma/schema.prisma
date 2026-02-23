@@ -32,3 +32,13 @@ model AgencyInstall {
   @@map("agency_installs")
   @@index([companyId])
 }
+
+model UsageCounter {
+  id           String   @id @default(cuid())
+  locationId   String   @unique @map("location_id")
+  requestCount Int      @default(0) @map("request_count")
+  lastRequest  DateTime @updatedAt @map("last_request")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("usage_counters")
+}

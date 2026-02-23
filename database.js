@@ -235,6 +235,22 @@ export class InstallsDB {
     }));
   }
 
+  // Increment usage counter for a location (fire-and-forget)
+  async incrementUsage(locationId) {
+    return this.prisma.usageCounter.upsert({
+      where: { locationId },
+      update: { requestCount: { increment: 1 } },
+      create: { locationId, requestCount: 1 }
+    });
+  }
+
+  // Get usage stats for a location
+  async getUsageStats(locationId) {
+    return this.prisma.usageCounter.findUnique({
+      where: { locationId }
+    });
+  }
+
   // Graceful shutdown
   async disconnect() {
     await this.prisma.$disconnect();

@@ -3,7 +3,7 @@ import { Router } from 'express';
 import CryptoJS from 'crypto-js';
 import express from 'express';
 import axios from 'axios';
-import { setAuthCookie, installs } from '../middleware/auth.js';
+import { setAuthCookie, requireAuth, installs } from '../middleware/auth.js';
 import { API_BASE, withAccessToken } from '../services/tokenService.js';
 
 const router = Router();
@@ -572,6 +572,21 @@ router.get('/debug-cookies', (req, res) => {
     rawCookieHeader: req.headers.cookie || 'none',
     cookieSecret: process.env.APP_SECRET ? 'configured' : 'missing'
   });
+});
+
+// Usage stats endpoint for review request targeting
+router.get('/usage', requireAuth, async (req, res) => {
+  try {
+    const stats = await installs.getUsageStats(req.locationId);
+    res.json({
+      requestCount: stats?.requestCount || 0,
+      firstSeen: stats?.createdAt || null,
+      lastActivity: stats?.lastRequest || null
+    });
+  } catch (error) {
+    console.error('Failed to get usage stats:', error.message);
+    res.status(500).json({ error: 'Failed to get usage stats' });
+  }
 });
 
 export default router;

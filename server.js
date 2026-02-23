@@ -17,6 +17,7 @@ import { normalizeDataType, parseOptions, asBool } from './src/utils/dataTransfo
 import { generateEncryptionKey, createSecureState, verifySecureState, validateEncryptionSetup, validateWebhookSignature } from './src/utils/crypto.js';
 import { handleAPIError } from './src/utils/apiHelpers.js';
 import { setAuthCookie, clearAuthCookie, requireAuth, validateTenant, installs } from './src/middleware/auth.js';
+import { usageTracking } from './src/middleware/usage.js';
 import { withAccessToken, callGHLAPI, API_BASE } from './src/services/tokenService.js';
 import authRoutes from './src/routes/auth.js';
 import templateRoutes from './src/routes/templates.js';
@@ -202,6 +203,9 @@ app.use(rateLimit({
 }));
 // Mount auth routes
 app.use('/api/auth', authRoutes);
+
+// Usage tracking middleware (fire-and-forget, runs after auth)
+app.use(usageTracking(installs));
 app.use('/templates', templateRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/objects', objectRoutes);
