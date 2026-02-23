@@ -350,13 +350,23 @@ router.get('/records/:objectKey', requireAuth, async (req, res) => {
     }
     
     const headers = isUpdateMode ? ['id', ...fieldKeys] : fieldKeys;
-    const sampleRow = isUpdateMode 
+    const sampleRow = isUpdateMode
       ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f))]
       : fieldInfo.map(f => getSampleData(f));
 
+    // Append assignment columns based on object type
+    const isStandard = ['contact', 'opportunity', 'business'].includes(cleanKey);
+    if (isStandard) {
+      headers.push('assigned_to');
+      sampleRow.push('user_id_here');
+    } else {
+      headers.push('owner', 'followers');
+      sampleRow.push('user_id_here', 'user_id_1,user_id_2');
+    }
+
     const csvContent = [
-      headers.join(','), 
-      sampleRow.map(cell => 
+      headers.join(','),
+      sampleRow.map(cell =>
         cell.includes(',') || cell.includes('|') ? `"${cell}"` : cell
       ).join(',')
     ].join('\n');

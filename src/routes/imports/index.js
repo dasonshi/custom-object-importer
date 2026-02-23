@@ -694,7 +694,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         const recordId = row.id;
         for (const [k, v] of Object.entries(row)) {
           // Skip system fields, CSV parser metadata, and empty values
-          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'association_id', 'related_record_id', 'association_type', '__parsed_extra'].includes(k)) continue;
+          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'assigned_to', 'association_id', 'related_record_id', 'association_type', '__parsed_extra'].includes(k)) continue;
           if (v === '' || v === null || v === undefined) continue;
 
           // Use the actual field type from schema
@@ -738,10 +738,22 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         if (row.followers) {
           createRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
         }
-        // Build request body for UPDATE (PUT) - only properties
+        if (row.assigned_to) {
+          createRequestBody.assignedTo = String(row.assigned_to).trim();
+        }
+        // Build request body for UPDATE (PUT)
         const updateRequestBody = {
           properties: properties
         };
+        if (row.owner) {
+          updateRequestBody.owner = String(row.owner).split(',').map(s => s.trim());
+        }
+        if (row.followers) {
+          updateRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
+        }
+        if (row.assigned_to) {
+          updateRequestBody.assignedTo = String(row.assigned_to).trim();
+        }
 
         let recordResult;
         let action = 'created';
