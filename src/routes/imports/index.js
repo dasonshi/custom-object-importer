@@ -694,7 +694,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         const recordId = row.id;
         for (const [k, v] of Object.entries(row)) {
           // Skip system fields, CSV parser metadata, and empty values
-          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'assigned_to', 'association_id', 'related_record_id', 'association_type', '__parsed_extra'].includes(k)) continue;
+          if (['object_key', 'id', 'external_id', 'owner', 'followers', 'assigned_to', 'association_id', 'related_record_id', 'association_type', '__parsed_extra', 'created_at', 'updated_at', 'created_by', 'updated_by'].includes(k)) continue;
           if (v === '' || v === null || v === undefined) continue;
 
           // Use the actual field type from schema
@@ -762,13 +762,13 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
             // First verify the record exists (with retry for rate limits)
             await retryWithBackoff(() => axios.get(
               `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
-              { headers }
+              { headers, params: { locationId } }
             ));
             // Record exists, update it (with retry for rate limits)
             recordResult = await retryWithBackoff(() => axios.put(
               `${API_BASE}/objects/${fullObjectKey}/records/${recordId}`,
               updateRequestBody,
-              { headers }
+              { headers, params: { locationId } }
             ));
             action = 'updated';
           } catch (getError) {
@@ -820,7 +820,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           controller.record429();
         }
 
-        console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message);
+        console.error(`Failed to process record (row ${rowIndex + 1}):`, apiError || e.message, '| Property keys sent:', Object.keys(properties));
         return {
           success: false,
           error: {
@@ -871,6 +871,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
     // Separate successes and failures
     const created = allResults.filter(r => r.success).map(r => r.data);
     const errors = allResults.filter(r => !r.success).map(r => r.error);
+    const idsNotFound = created.filter(r => r.action === 'created (id not found)').length;
 
     // Collect all phone formatting warnings
     const phoneWarnings = created
@@ -900,7 +901,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         total: records.length,
         successful: created.length,
         failed: errors.length,
-        phoneAutoFormatted: phoneWarnings.length
+        phoneAutoFormatted: phoneWarnings.length,
+        idsNotFound
       },
       rateStats: stats
     });

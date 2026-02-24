@@ -486,14 +486,7 @@ router.get('/:objectKey/records/export', requireAuth, validateTenant, async (req
     
     // Convert to CSV format using Papaparse
     const csv = Papa.unparse({
-      fields: headers.map(h => {
-        // Use field labels where available
-        if (fieldMap[h]) {
-          return fieldMap[h].label;
-        }
-        // Make system headers more readable
-        return h.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-      }),
+      fields: headers,  // Use raw field keys so exported CSVs are directly re-importable
       data: rows
     });
     
