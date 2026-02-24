@@ -727,13 +727,13 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
             properties[k] = v;
           }
         }
-        // Build request body for CREATE (POST)
+        // Build request body for CREATE (POST) - plain arrays
         const createRequestBody = {
           locationId: locationId,
           properties: properties
         };
         if (row.owner) {
-          createRequestBody.owner = String(row.owner).split(',').map(s => s.trim());
+          createRequestBody.owners = String(row.owner).split(',').map(s => s.trim());
         }
         if (row.followers) {
           createRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
@@ -741,15 +741,15 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         if (row.assigned_to) {
           createRequestBody.assignedTo = String(row.assigned_to).trim();
         }
-        // Build request body for UPDATE (PUT)
+        // Build request body for UPDATE (PUT) - {add:[], remove:[]} format
         const updateRequestBody = {
           properties: properties
         };
         if (row.owner) {
-          updateRequestBody.owner = String(row.owner).split(',').map(s => s.trim());
+          updateRequestBody.owners = { add: String(row.owner).split(',').map(s => s.trim()) };
         }
         if (row.followers) {
-          updateRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
+          updateRequestBody.followers = { add: String(row.followers).split(',').map(s => s.trim()) };
         }
         if (row.assigned_to) {
           updateRequestBody.assignedTo = String(row.assigned_to).trim();
