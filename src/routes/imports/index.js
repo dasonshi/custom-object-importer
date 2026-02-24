@@ -733,7 +733,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           properties: properties
         };
         if (row.owner) {
-          createRequestBody.owner = String(row.owner).split(',').map(s => s.trim());
+          createRequestBody.owners = String(row.owner).split(',').map(s => s.trim());
         }
         if (row.followers) {
           createRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
@@ -746,7 +746,7 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           properties: properties
         };
         if (row.owner) {
-          updateRequestBody.owner = String(row.owner).split(',').map(s => s.trim());
+          updateRequestBody.owners = String(row.owner).split(',').map(s => s.trim());
         }
         if (row.followers) {
           updateRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
