@@ -689,8 +689,8 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
 
     // Helper function to process a single record
     const processRecord = async (row, rowIndex) => {
+      let properties = {};
       try {
-        const properties = {};
         const recordId = row.id;
         for (const [k, v] of Object.entries(row)) {
           // Skip system fields, CSV parser metadata, and empty values
