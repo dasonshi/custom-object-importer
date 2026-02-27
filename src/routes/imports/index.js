@@ -660,9 +660,15 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
   }
   try {
     // Get the full object key for API calls
-    const fullObjectKey = objectKey.startsWith('custom_objects.') 
-      ? objectKey 
-      : `custom_objects.${objectKey}`;
+    // Standard objects (business, contact, opportunity) use their key as-is
+    // Custom objects need the custom_objects. prefix
+    const STANDARD_OBJECTS = ['contact', 'opportunity', 'business'];
+    const isStandardObject = STANDARD_OBJECTS.includes(objectKey);
+    const fullObjectKey = isStandardObject
+      ? objectKey
+      : objectKey.startsWith('custom_objects.')
+        ? objectKey
+        : `custom_objects.${objectKey}`;
     // FIRST: Fetch field definitions to know their types
     const fieldsResponse = await axios.get(
       `${API_BASE}/custom-fields/object-key/${encodeURIComponent(fullObjectKey)}`,
@@ -732,10 +738,11 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
           locationId: locationId,
           properties: properties
         };
-        if (row.owner) {
+        // owners/followers only supported for custom objects
+        if (row.owner && !isStandardObject) {
           createRequestBody.owners = String(row.owner).split(',').map(s => s.trim());
         }
-        if (row.followers) {
+        if (row.followers && !isStandardObject) {
           createRequestBody.followers = String(row.followers).split(',').map(s => s.trim());
         }
         if (row.assigned_to) {
@@ -745,10 +752,11 @@ router.post('/objects/:objectKey/records/import', requireAuth, upload.single('re
         const updateRequestBody = {
           properties: properties
         };
-        if (row.owner) {
+        // owners/followers only supported for custom objects
+        if (row.owner && !isStandardObject) {
           updateRequestBody.owners = { add: String(row.owner).split(',').map(s => s.trim()) };
         }
-        if (row.followers) {
+        if (row.followers && !isStandardObject) {
           updateRequestBody.followers = { add: String(row.followers).split(',').map(s => s.trim()) };
         }
         if (row.assigned_to) {
