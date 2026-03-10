@@ -77,17 +77,15 @@ router.post('/disconnect', requireAuth, async (req, res) => {
   const locationId = req.locationId;
 
   try {
-    // Delete the location-specific installation
+    // Delete the location-specific installation only
+    // Agency install is preserved so other locations under the same agency still work
+    // True uninstalls are handled by the GHL uninstall webhook in server.js
     await installs.delete(locationId);
-
-    // Also delete any agency installation containing this location
-    // This prevents automatic reconnection via agency bulk install flow
-    await installs.deleteAgencyInstallByLocationId(locationId);
 
     // Clear the auth cookie
     clearAuthCookie(res);
 
-    console.log(`✅ Disconnected location ${locationId} and cleared agency installs`);
+    console.log(`✅ Disconnected location ${locationId}`);
 
     res.json({
       message: 'Disconnected successfully',

@@ -181,39 +181,20 @@ export class InstallsDB {
     }
   }
 
-  // Find and delete agency install containing a specific locationId
-  // Used when a user disconnects to prevent automatic reconnection
+  // DEPRECATED: Agency installs should only be deleted via deleteAgencyInstall(companyId)
+  // on actual GHL uninstall webhooks, not on single-location disconnect.
   async deleteAgencyInstallByLocationId(locationId) {
-    try {
-      // Get all agency installs
-      const agencyInstalls = await this.prisma.agencyInstall.findMany();
+    console.warn('⚠️ DEPRECATED: deleteAgencyInstallByLocationId called for', locationId);
+    return false;
+  }
 
-      // Find the one containing this locationId
-      for (const record of agencyInstalls) {
-        try {
-          const decryptedData = this.decrypt(record.encryptedData);
-          const agencyData = JSON.parse(decryptedData);
-
-          // Check if this agency install contains the locationId
-          if (agencyData.locations?.some(l => l.id === locationId || l.locationId === locationId)) {
-            console.log(`🗑️ Deleting agency install for companyId: ${record.companyId} (contains location ${locationId})`);
-            await this.prisma.agencyInstall.delete({
-              where: { companyId: record.companyId }
-            });
-            return true;
-          }
-        } catch (e) {
-          console.error('Error checking agency install:', e.message);
-          continue;
-        }
-      }
-
-      console.log(`ℹ️ No agency install found containing location ${locationId}`);
-      return false;
-    } catch (e) {
-      console.error('Error in deleteAgencyInstallByLocationId:', e);
-      return false;
-    }
+  // Delete all location installs for a company (used on agency-level uninstall webhook)
+  async deleteByCompanyId(companyId) {
+    if (!companyId) return;
+    const result = await this.prisma.install.deleteMany({
+      where: { companyId }
+    });
+    console.log(`🗑️ Deleted ${result.count} location installs for company ${companyId}`);
   }
 
   // List all installations (for admin/debug)

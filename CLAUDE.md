@@ -7,10 +7,21 @@
 - CSV parsing and import processing
 - GHL API calls for objects, fields, and records
 
+**Git remotes (TWO repos):**
+- `origin` → `github.com/dasonshi/custom-object-importer` (branch: `master`) — source repo
+- `uploader` → `github.com/dasonshi/custom-object-uploader` (branch: `main`) — **Render deploys from this**
+
+**Deploying:**
+```bash
+git push origin master          # Push to source repo
+git push uploader master:main   # Push to Render deploy repo (REQUIRED for deploy)
+```
+**CRITICAL:** Render auto-deploys from `uploader/main`. If you only push to `origin`, changes will NOT be deployed.
+
 **The FRONTEND is a separate React app** located at:
 - **Local path:** `/Users/davidsonshine/Desktop/Custom Object Importer/ghl-data-forge`
 - **GitHub:** `https://github.com/dasonshi/ghl-data-forge`
-- **Deployed via:** Lovable (not auto-deployed from git push)
+- **Deployed via:** Vercel (auto-deploys from git push to `main`)
 - **Tech stack:** React + TypeScript + Vite + shadcn/ui
 
 **Where users upload CSVs:** Frontend `ImportRecordsTab.tsx` and `AddFieldsTab.tsx` components handle file uploads using PapaParse for client-side CSV parsing, then POST to this backend's `/api/*` endpoints.

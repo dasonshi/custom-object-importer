@@ -339,6 +339,42 @@ if (!locationId) {
 
       console.log('✅ Filtered installed locations:', installedLocations.length, 'out of', allLocations.length, 'total locations');
 
+      // GHL sometimes returns 0 locations due to propagation delay — retry once after 2s
+      if (installedLocations.length === 0 && allLocations.length === 0) {
+        console.log('⏳ GHL returned 0 locations - retrying after 2s delay (known timing issue)');
+        await new Promise(r => setTimeout(r, 2000));
+
+        try {
+          const retryResponse = await axios.get(`${API_BASE}/oauth/installedLocations`, {
+            headers: {
+              Authorization: `Bearer ${access_token}`,
+              Version: '2021-07-28',
+              Accept: 'application/json'
+            },
+            params: {
+              companyId,
+              appId: '68ae6ca8bb70273ca2ca7e24',
+              isInstalled: true
+            },
+            timeout: 10000,
+          });
+
+          const retryLocations = retryResponse.data?.locations || [];
+          const retryInstalled = retryLocations.filter(loc => loc.isInstalled);
+
+          console.log(`🔄 Retry result: ${retryInstalled.length} installed out of ${retryLocations.length} total`);
+
+          if (retryInstalled.length > 0) {
+            allLocations.length = 0;
+            allLocations.push(...retryLocations);
+            installedLocations.length = 0;
+            installedLocations.push(...retryInstalled);
+          }
+        } catch (retryErr) {
+          console.log('⚠️ Retry failed:', retryErr?.response?.status || retryErr.message);
+        }
+      }
+
       if (installedLocations.length > 0) {
         // For each location, we need to get location-specific tokens
         // Agency tokens can't access location-specific APIs due to authClass restrictions
@@ -482,9 +518,10 @@ app.post('/oauth/uninstall', express.json(), async (req, res) => {
         await installs.delete(locationId);
         console.log(`✅ Removed location installation: ${locationId}`);
       } else if (companyId) {
-        // For agency-level uninstalls, we'd need to remove all locations for this company
-        // This would require tracking company->location mapping, which we don't currently do
-        console.log(`⚠️ Agency-level uninstall for company ${companyId} - manual cleanup may be needed`);
+        // Agency-level uninstall: clean up agency tokens + all location installs for this company
+        await installs.deleteAgencyInstall(companyId);
+        await installs.deleteByCompanyId(companyId);
+        console.log(`✅ Agency uninstall processed for company ${companyId}`);
       }
     }
 
