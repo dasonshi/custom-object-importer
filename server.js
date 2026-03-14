@@ -453,6 +453,8 @@ if (!locationId) {
       });
       console.log('✅ Agency tokens saved for on-demand consumption');
 
+      console.log(`NEW INSTALL [Custom Data Importer] — type=agency company=${companyId} locations=${installedLocations.length}`);
+
       return res.redirect('/launch');
 
     } catch (error) {
@@ -473,6 +475,8 @@ await installs.set(locationId, {
   expires_at: Date.now() + ((expires_in ?? 3600) * 1000) - 60_000
 });
 setAuthCookie(res, locationId);
+
+console.log(`NEW INSTALL [Custom Data Importer] — type=location location=${locationId}`);
 
 // Add a CHIPS/Partitioned cookie so Chrome will send it cross-site from Lovable
 {
