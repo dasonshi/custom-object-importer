@@ -442,6 +442,7 @@ if (!locationId) {
       // Always save agency tokens for on-demand location token exchange
       // This handles the case where GHL returns 0 installed locations at install time
       // (timing issue or API quirk) - the app-context endpoint can exchange later
+      const existingAgency = await installs.getAgencyInstallByCompanyId(companyId);
       console.log('💾 Saving agency tokens for company:', companyId);
       await installs.saveAgencyInstall(companyId, {
         agency_access_token: access_token,
@@ -453,7 +454,11 @@ if (!locationId) {
       });
       console.log('✅ Agency tokens saved for on-demand consumption');
 
-      console.log(`NEW INSTALL [Custom Data Importer] — type=agency company=${companyId} locations=${installedLocations.length}`);
+      if (existingAgency) {
+        console.log(`RECONNECT [Custom Data Importer] — type=agency company=${companyId} locations=${installedLocations.length}`);
+      } else {
+        console.log(`NEW INSTALL [Custom Data Importer] — type=agency company=${companyId} locations=${installedLocations.length}`);
+      }
 
       return res.redirect('/launch');
 
@@ -469,6 +474,7 @@ if (!locationId) {
 }
 
 // Normal case: we have locationId, save and set cookies
+const existingLocation = await installs.has(locationId);
 await installs.set(locationId, {
   access_token,
   refresh_token,
@@ -476,7 +482,11 @@ await installs.set(locationId, {
 });
 setAuthCookie(res, locationId);
 
-console.log(`NEW INSTALL [Custom Data Importer] — type=location location=${locationId}`);
+if (existingLocation) {
+  console.log(`RECONNECT [Custom Data Importer] — type=location location=${locationId}`);
+} else {
+  console.log(`NEW INSTALL [Custom Data Importer] — type=location location=${locationId}`);
+}
 
 // Add a CHIPS/Partitioned cookie so Chrome will send it cross-site from Lovable
 {
