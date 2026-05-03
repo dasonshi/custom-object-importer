@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { withAccessToken, API_BASE } from '../services/tokenService.js';
+import { isStandardObject, getFieldFetchEndpoint } from '../utils/objectHelpers.js';
 import axios from 'axios';
 
 const router = Router();
@@ -287,25 +288,36 @@ router.get('/records/:objectKey', requireAuth, async (req, res) => {
 
   try {
     const cleanKey = objectKey.replace(/^custom_objects\./, '');
-    const apiObjectKey = `custom_objects.${cleanKey}`;
+    const isStandard = isStandardObject(cleanKey);
     const isUpdateMode = req.query.mode === 'update';
 
     const token = await withAccessToken(locationId);
-    const fieldsResponse = await axios.get(`${API_BASE}/custom-fields/object-key/${encodeURIComponent(apiObjectKey)}`, {
-      headers: { 
+    const endpoint = getFieldFetchEndpoint(cleanKey, locationId);
+    const fieldsResponse = await axios.get(endpoint.url, {
+      headers: {
         Authorization: `Bearer ${token}`,
         Version: '2021-07-28'
       },
-      params: { locationId }
+      params: endpoint.params
     });
 
-    const fields = Array.isArray(fieldsResponse.data?.fields)
-      ? fieldsResponse.data.fields
-      : Array.isArray(fieldsResponse.data?.data?.fields)
-      ? fieldsResponse.data.data.fields
-      : [];
+    let rawFields;
+    if (endpoint.responseType === 'standard') {
+      // Contact/Opportunity: filter customFields by model
+      const customFields = Array.isArray(fieldsResponse.data?.customFields)
+        ? fieldsResponse.data.customFields
+        : [];
+      rawFields = customFields.filter(field => field.model === cleanKey);
+    } else {
+      // Business + custom objects: fields array
+      rawFields = Array.isArray(fieldsResponse.data?.fields)
+        ? fieldsResponse.data.fields
+        : Array.isArray(fieldsResponse.data?.data?.fields)
+        ? fieldsResponse.data.data.fields
+        : [];
+    }
 
-    const fieldInfo = fields
+    const fieldInfo = rawFields
       .map((field) => {
         let key = '';
         if (field.fieldKey) {
@@ -316,19 +328,21 @@ router.get('/records/:objectKey', requireAuth, async (req, res) => {
             .toLowerCase()
             .replace(/[^a-z0-9]/g, '_') || field.id;
         }
-        
+
         return {
           key,
           dataType: field.dataType || field.type || 'TEXT',
           name: field.name,
-          options: field.options
+          options: field.options || field.picklistOptions
         };
       })
       .filter(f => f.key);
-    
+
     const fieldKeys = fieldInfo.map(f => f.key);
-    
+
     function getSampleData(field) {
+      const firstOptionLabel = (opt) =>
+        typeof opt === 'string' ? opt : opt?.label ?? opt?.value ?? '';
       switch (field.dataType) {
         case 'TEXT': return `Sample ${field.name}`;
         case 'LARGE_TEXT': return `This is a sample description for ${field.name}`;
@@ -337,25 +351,24 @@ router.get('/records/:objectKey', requireAuth, async (req, res) => {
         case 'EMAIL': return 'example@email.com';
         case 'DATE': return new Date().toISOString().split('T')[0];
         case 'MONETORY': return '99.99';
-        case 'CHECKBOX': return field.options?.length > 0 ? field.options[0].label : 'Yes';
+        case 'CHECKBOX': return field.options?.length > 0 ? firstOptionLabel(field.options[0]) : 'Yes';
         case 'SINGLE_OPTIONS':
-        case 'RADIO': return field.options?.length > 0 ? field.options[0].label : 'Option 1';
-        case 'MULTIPLE_OPTIONS': return field.options?.length > 1 
-          ? `${field.options[0].label}|${field.options[1].label}`
+        case 'RADIO': return field.options?.length > 0 ? firstOptionLabel(field.options[0]) : 'Option 1';
+        case 'MULTIPLE_OPTIONS': return field.options?.length > 1
+          ? `${firstOptionLabel(field.options[0])}|${firstOptionLabel(field.options[1])}`
           : 'Option 1|Option 2';
         case 'TEXTBOX_LIST': return 'Item 1|Item 2|Item 3';
         case 'FILE_UPLOAD': return 'https://example.com/file.pdf';
         default: return `Sample ${field.name}`;
       }
     }
-    
+
     const headers = isUpdateMode ? ['id', ...fieldKeys] : fieldKeys;
     const sampleRow = isUpdateMode
       ? ['record_id_here', ...fieldInfo.map(f => getSampleData(f))]
       : fieldInfo.map(f => getSampleData(f));
 
     // Append assignment columns based on object type
-    const isStandard = ['contact', 'opportunity', 'business'].includes(cleanKey);
     if (isStandard) {
       headers.push('assigned_to');
       sampleRow.push('user_id_here');
