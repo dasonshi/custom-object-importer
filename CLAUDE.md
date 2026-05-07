@@ -155,13 +155,22 @@ curl -s -X POST "https://api.axiom.co/v2/monitors" \
 
 ## User Tracking
 
-User activity is tracked in `users.csv` with columns:
+Two files:
+- `users.csv` — per-user roster (current state)
+- `user_activity_history.csv` — weekly snapshots (over-time trend)
+
+`users.csv` columns:
 - `location_id` - GHL location ID (unique per user/account)
 - `first_seen`, `last_activity` - Date range
 - `request_count` - Total API requests
-- `is_dev_account` - true if dev/test
+- `is_dev_account` - true if dev/test (excluded from trend math)
 - `months_active` - Duration
 - `status` - active/churned
+
+`user_activity_history.csv` columns (one row per Monday + today):
+- `snapshot_date`, `total_installs`, `active_30d`, `churned_total`, `new_installs_30d`, `retention_pct`
+- "Active" = had any activity within 30 days of `snapshot_date`
+- Backfilled from `users.csv` first/last dates; subsequent runs append today's row
 
 **Dev account:** `gdzneuvA9mUJoRroCv4O`
 
@@ -173,4 +182,13 @@ User activity is tracked in `users.csv` with columns:
 
 # 2. Add any new installs to users.csv
 # 3. Mark long-inactive users as churned if appropriate
+
+# 4. Append today's snapshot to the trend history
+./scripts/axiom.sh snapshot
+
+# View recent trend (default 12 weeks)
+./scripts/axiom.sh trend
+
+# Recompute the entire history from users.csv (use after backfilling old data)
+./scripts/axiom.sh snapshot --rebuild
 ```

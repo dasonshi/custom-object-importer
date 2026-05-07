@@ -19,6 +19,8 @@ usage() {
     echo "  activity <locId>    - Show activity for a specific location ID"
     echo "  count <locId>       - Count requests for a location ID"
     echo "  raw <apl>           - Run raw APL query (auto-adds host filter)"
+    echo "  snapshot [--rebuild] - Append today's row to user_activity_history.csv (or rebuild)"
+    echo "  trend [weeks]       - Show recent weekly trend (default: 12)"
     echo ""
     exit 1
 }
@@ -175,6 +177,24 @@ case "$1" in
             QUERY="['$DATASET'] | where $HOST_FILTER | $QUERY"
         fi
         axiom query "$QUERY" --format=table
+        ;;
+
+    snapshot)
+        # Pass through --rebuild flag if provided
+        python3 "$SCRIPT_DIR/snapshot.py" "$2"
+        ;;
+
+    trend)
+        WEEKS="${2:-12}"
+        HISTORY_CSV="$PROJECT_DIR/user_activity_history.csv"
+        if [ ! -f "$HISTORY_CSV" ]; then
+            echo "Error: $HISTORY_CSV not found. Run: $0 snapshot --rebuild"
+            exit 1
+        fi
+        echo "=== User activity trend (last $WEEKS weeks) ==="
+        echo ""
+        printf "%-12s %6s %7s %8s %7s %6s\n" "date" "total" "active" "churned" "new30d" "ret%"
+        tail -n +2 "$HISTORY_CSV" | tail -n "$WEEKS" | awk -F',' '{ printf "%-12s %6s %7s %8s %7s %6s\n", $1, $2, $3, $4, $5, $6 }'
         ;;
 
     *)
